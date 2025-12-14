@@ -1,0 +1,17 @@
+<svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Dr.Lemon</title>
+  <desc id="desc">Simple lemon logo for Dr.Lemon brand</desc>
+  <defs>
+    <linearGradient id="lemonGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef9c3"/>
+      <stop offset="100%" stop-color="#facc15"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(4,4)">
+    <ellipse cx="16" cy="16" rx="14" ry="11" fill="url(#lemonGradient)" stroke="#eab308" stroke-width="1.5"/>
+    <ellipse cx="16" cy="16" rx="9" ry="6.5" fill="none" stroke="#f97316" stroke-width="1"/>
+    <path d="M16 10.5 L16 21.5 M11.5 13 L20.5 19 M11.5 19 L20.5 13" stroke="#f59e0b" stroke-width="1" stroke-linecap="round"/>
+    <path d="M7 8 Q10 3 16 3 Q22 3 25 8" fill="none" stroke="#22c55e" stroke-width="1.4" stroke-linecap="round"/>
+  </g>
+</svg>
+

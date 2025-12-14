@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "setupComplete": false,
+  "preferences": {
+    "theme": "dark",
+    "measureUnit": "Metric",
+    "autoMediaSearch": true,
+    "showWeatherWidget": true,
+    "showNewsWidget": true
+  },
+  "personalization": {
+    "systemInstructions": ""
+  },
+  "modelProviders": [
+    {
+      "id": "openai-compatible",
+      "name": "OpenAI Compatible (Example)",
+      "type": "openai",
+      "chatModels": [
+        {
+          "name": "Qwen3-30B-A3B",
+          "key": "Qwen/Qwen3-30B-A3B"
+        }
+      ],
+      "embeddingModels": [
+        {
+          "name": "Qwen3-Embedding-8B",
+          "key": "Qwen/Qwen3-Embedding-8B"
+        }
+      ],
+      "config": {
+        "apiKey": "",
+        "baseURL": ""
+      },
+      "hash": ""
+    }
+  ],
+  "search": {
+    "searxngURL": "http://localhost:8080"
+  }
+}
+
