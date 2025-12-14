@@ -19,6 +19,9 @@ type MacroItem = {
   value: number;
   unit: string;
   period: string;
+  prev_value?: number;
+  prev_period?: string;
+  frequency?: string;
 };
 
 type SummaryResponse = {

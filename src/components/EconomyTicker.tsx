@@ -18,6 +18,9 @@ type MacroItem = {
   value: number;
   unit: string;
   period: string;
+  prev_value?: number;
+  prev_period?: string;
+  frequency?: string;
 };
 
 type SummaryResponse = {
@@ -86,7 +89,9 @@ const EconomyTicker = () => {
           value: `${m.value.toFixed(2)}${m.unit}`,
           kind: 'macro',
           unit: m.unit,
-          frequency: '月度/季度',
+          prevLabel:
+            typeof m.prev_value === 'number' ? m.prev_value.toFixed(2) : undefined,
+          frequency: m.frequency || '月度/季度',
         }));
 
         let combined = [...marketItems, ...macroItems];

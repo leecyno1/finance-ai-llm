@@ -24,18 +24,27 @@ export const callTushare = async (
     throw new Error('Tushare token not configured');
   }
 
-  const res = await fetch(TUSHARE_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      api_name: apiName,
-      token,
-      params,
-      fields: fields.join(','),
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  let res: Response;
+  try {
+    res = await fetch(TUSHARE_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        api_name: apiName,
+        token,
+        params,
+        fields: fields.join(','),
+      }),
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!res.ok) {
     throw new Error(`Tushare HTTP error: ${res.status}`);

@@ -32,6 +32,9 @@ type MacroItem = {
   value: number;
   unit: string;
   period: string;
+  prev_value?: number;
+  prev_period?: string;
+  frequency?: string;
 };
 
 type EconomySummary = {
@@ -44,6 +47,8 @@ type EconomySummary = {
 
 type EconomyCache = {
   updatedAt: number;
+  marketUpdatedAt?: number;
+  macroUpdatedAt?: number;
   data: EconomySummary;
 };
 
@@ -57,11 +62,58 @@ const formatDateYYYYMMDD = (date: Date) => {
   return `${y}${m}${d}`;
 };
 
+const formatMonthYYYYMM = (date: Date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  return `${y}${m}`;
+};
+
+const formatQuarterYYYYQ = (date: Date) => {
+  const y = date.getFullYear();
+  const month = date.getMonth() + 1;
+  const q = month <= 3 ? 1 : month <= 6 ? 2 : month <= 9 ? 3 : 4;
+  return `${y}Q${q}`;
+};
+
 // Approximate \"last month\" window for index time series
 const getLastMonthStartDate = () => {
   const date = new Date();
   date.setDate(date.getDate() - 31);
   return formatDateYYYYMMDD(date);
+};
+
+const getLast12MonthsStartMonth = () => {
+  const date = new Date();
+  date.setMonth(date.getMonth() - 12);
+  return formatMonthYYYYMM(date);
+};
+
+const getLast8QuartersStartQuarter = () => {
+  const date = new Date();
+  date.setMonth(date.getMonth() - 24);
+  return formatQuarterYYYYQ(date);
+};
+
+const getShanghaiDateKey = (date: Date) => {
+  // YYYY-MM-DD in Asia/Shanghai
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+};
+
+const isAfterShanghai21 = (date: Date) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    hour12: false,
+  })
+    .formatToParts(date)
+    .find((p) => p.type === 'hour')?.value;
+  const hour = parts ? Number(parts) : 0;
+  return hour >= 21;
 };
 
 const loadCache = (): EconomyCache | null => {
@@ -78,16 +130,12 @@ const loadCache = (): EconomyCache | null => {
   }
 };
 
-const saveCache = (data: EconomySummary) => {
+const saveCache = (cache: EconomyCache) => {
   try {
     const dir = path.dirname(ECONOMY_CACHE_PATH);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    const cache: EconomyCache = {
-      updatedAt: Date.now(),
-      data,
-    };
     fs.writeFileSync(ECONOMY_CACHE_PATH, JSON.stringify(cache, null, 2));
   } catch (err) {
     console.error('Failed to write economy cache file:', err);
@@ -264,89 +312,402 @@ export const GET = async () => {
   }
 
   try {
-    // 缓存策略：经济数据每天晚上 21:00 更新一次。
     const now = new Date();
     const cached = loadCache();
-    if (cached) {
-      const updatedAt = new Date(cached.updatedAt);
-      const updatedDay = updatedAt.toISOString().slice(0, 10);
-      const nowDay = now.toISOString().slice(0, 10);
 
-      // 如果还是同一天，直接用缓存
-      if (updatedDay === nowDay) {
-        return Response.json(cached.data);
-      }
+    // 缓存策略：
+    // - 市场数据：每 10 分钟刷新一次（滚动条要求）
+    // - 宏观经济：每天上海时间 21:00 后刷新一次（若太久未刷新也会补刷）
+    const MARKET_TTL_MS = 10 * 60 * 1000;
+    const FORCE_REFRESH = false;
 
-      // 如果已经进入下一天，但还没到 21 点，继续使用前一天的数据
-      if (now.getHours() < 21) {
-        return Response.json(cached.data);
-      }
+    const cachedMarketUpdatedAt =
+      cached?.marketUpdatedAt ?? cached?.updatedAt ?? 0;
+    const cachedMacroUpdatedAt = cached?.macroUpdatedAt ?? cached?.updatedAt ?? 0;
+
+    const marketFresh =
+      cached && cachedMarketUpdatedAt && Date.now() - cachedMarketUpdatedAt < MARKET_TTL_MS;
+
+    const nowShanghaiDay = getShanghaiDateKey(now);
+    const macroShanghaiDay = cachedMacroUpdatedAt
+      ? getShanghaiDateKey(new Date(cachedMacroUpdatedAt))
+      : '';
+
+    const macroTooOld =
+      !cachedMacroUpdatedAt || Date.now() - cachedMacroUpdatedAt > 36 * 60 * 60 * 1000;
+    const macroNeedsRefresh =
+      !cached ||
+      macroTooOld ||
+      (isAfterShanghai21(now) && macroShanghaiDay !== nowShanghaiDay);
+
+    if (cached && marketFresh && !macroNeedsRefresh && !FORCE_REFRESH) {
+      return Response.json(cached.data);
     }
 
-    const market: (MarketItem & { history?: MarketHistoryPoint[] })[] = [];
+    let market: (MarketItem & { history?: MarketHistoryPoint[] })[] =
+      cached?.data.market ?? [];
+    let tickerMarket: MarketItem[] = cached?.data.tickerMarket ?? [];
+    let macro: (MacroItem & { history?: MacroHistoryPoint[] })[] =
+      (cached?.data.macro as any) ?? [];
+
+    let marketUpdatedAt = cachedMarketUpdatedAt || 0;
+    let macroUpdatedAt = cachedMacroUpdatedAt || 0;
+
     const startDate = getLastMonthStartDate();
 
-    // Fetch index time series for the last month for a set of indices.
-    // We use index_daily, limiting by start_date, and keep both:
-    // - 最新一个交易日数据
-    // - 最近一个月的日度历史 (history)
-    for (const series of INDEX_SERIES) {
-      try {
-        const rows = await callTushare(
-          'index_daily',
-          {
-            ts_code: series.id,
-            start_date: startDate,
-          },
-          ['ts_code', 'trade_date', 'close', 'pct_chg'],
-        );
+    // 市场数据：若缓存过期，则从 TuShare 拉取最新（并带最近一个月历史）
+    if (!marketFresh || FORCE_REFRESH || !market.length) {
+      market = [];
 
-        if (!rows.length) continue;
+      for (const series of INDEX_SERIES) {
+        try {
+          const rows = await callTushare(
+            'index_daily',
+            {
+              ts_code: series.id,
+              start_date: startDate,
+            },
+            ['ts_code', 'trade_date', 'close', 'pct_chg'],
+          );
 
-        // Sort ascending by trade_date for a clean time series
-        rows.sort((a, b) =>
-          String(a.trade_date).localeCompare(String(b.trade_date)),
-        );
-        const latest = rows[rows.length - 1];
+          if (!rows.length) continue;
 
-        const close = Number(latest.close ?? 0);
-        const pctChg = Number(latest.pct_chg ?? 0);
+          rows.sort((a, b) =>
+            String(a.trade_date).localeCompare(String(b.trade_date)),
+          );
+          const latest = rows[rows.length - 1];
 
-        const history: MarketHistoryPoint[] = rows.map((row) => ({
-          trade_date: String(row.trade_date ?? ''),
-          close: Number(row.close ?? 0),
-          pct_chg: Number(row.pct_chg ?? 0),
-        }));
+          const close = Number(latest.close ?? 0);
+          const pctChg = Number(latest.pct_chg ?? 0);
 
-        market.push({
-          id: series.id,
-          name: series.name,
-          region: series.region,
-          close,
-          pct_chg: pctChg,
-          trade_date: String(latest.trade_date ?? ''),
-          frequency: '日度',
-          unit: '点',
-          // 最近一个月的历史数据
-          history,
-        });
-      } catch (err) {
-        console.error('Failed to fetch index data from Tushare', series.id, err);
+          const history: MarketHistoryPoint[] = rows.map((row) => ({
+            trade_date: String(row.trade_date ?? ''),
+            close: Number(row.close ?? 0),
+            pct_chg: Number(row.pct_chg ?? 0),
+          }));
+
+          market.push({
+            id: series.id,
+            name: series.name,
+            region: series.region,
+            close,
+            pct_chg: pctChg,
+            trade_date: String(latest.trade_date ?? ''),
+            frequency: '日度',
+            unit: '点',
+            history,
+          });
+        } catch (err) {
+          console.error(
+            'Failed to fetch index data from Tushare',
+            series.id,
+            err,
+          );
+        }
       }
+
+      marketUpdatedAt = Date.now();
+
+      // 为滚动条构造更丰富的市场数据：每个指数取最近 5 个交易日
+      const tickerMarketBase: MarketItem[] = [];
+      const takeDays = 5;
+
+      for (const m of market) {
+        const history = m.history ?? [];
+        if (!history.length) continue;
+
+        const len = history.length;
+        const startIdx = Math.max(0, len - takeDays);
+
+        for (let i = startIdx; i < len; i++) {
+          const point = history[i];
+          const prevPoint = i > 0 ? history[i - 1] : point;
+
+          tickerMarketBase.push({
+            id: `${m.id}-${point.trade_date}`,
+            name: `${m.name} ${String(point.trade_date).slice(4, 8)}`,
+            region: m.region,
+            close: point.close,
+            pct_chg: point.pct_chg,
+            trade_date: point.trade_date,
+            prev_close: prevPoint.close,
+            unit: '点',
+            frequency: '日度',
+          });
+        }
+      }
+
+      let nextTickerMarket: MarketItem[] = [...tickerMarketBase];
+      const baseLen = tickerMarketBase.length;
+      while (nextTickerMarket.length < 100 && baseLen > 0) {
+        const needed = Math.min(baseLen, 100 - nextTickerMarket.length);
+        nextTickerMarket = nextTickerMarket.concat(
+          tickerMarketBase.slice(0, needed),
+        );
+      }
+
+      tickerMarket = nextTickerMarket;
     }
 
-    // For now, macro data still uses demo placeholders (可按需扩展为真实TuShare宏观数据).
-    const macro: (MacroItem & { history?: MacroHistoryPoint[] })[] =
-      DEMO_MACRO.map((m) => ({
-        ...m,
-        // 简单标注频率与单位（示例数据，可按需对接 TuShare 宏观接口）
-        history: [
-          {
-            period: m.period,
-            value: m.value,
-          },
-        ],
-      }));
+    // 宏观经济：每天上海时间 21:00 更新一次
+    if (macroNeedsRefresh || FORCE_REFRESH || !macro.length) {
+      const monthStart = getLast12MonthsStartMonth();
+      const monthEnd = formatMonthYYYYMM(now);
+      const qStart = getLast8QuartersStartQuarter();
+      const qEnd = formatQuarterYYYYQ(now);
+
+      const toNum = (v: any) => (v === null || v === undefined ? NaN : Number(v));
+      const formatMonth = (m: string) =>
+        m && m.length === 6 ? `${m.slice(0, 4)}-${m.slice(4, 6)}` : m;
+
+      const formatQuarter = (q: string) => q;
+
+      const pickLatestPair = <T extends Record<string, any>>(
+        rows: T[],
+        key: keyof T,
+      ) => {
+        const sorted = [...rows].sort((a, b) =>
+          String(a[key]).localeCompare(String(b[key])),
+        );
+        const latest = sorted[sorted.length - 1];
+        const prev = sorted.length >= 2 ? sorted[sorted.length - 2] : undefined;
+        return { latest, prev };
+      };
+
+      const macroItems: MacroItem[] = [];
+
+      // Shibor（日度利率）
+      try {
+        const startDate = getLastMonthStartDate();
+        const endDate = formatDateYYYYMMDD(now);
+        const rows = await callTushare(
+          'shibor',
+          { start_date: startDate, end_date: endDate },
+          ['date', 'on', '1w', '1m', '3m', '6m', '1y'],
+        );
+        if (rows.length) {
+          const { latest, prev } = pickLatestPair(rows, 'date');
+          const date = String(latest.date ?? '');
+          const prevDate = prev ? String(prev.date ?? '') : undefined;
+
+          const shiborFields: { key: string; name: string }[] = [
+            { key: 'on', name: 'Shibor 隔夜' },
+            { key: '1w', name: 'Shibor 1周' },
+            { key: '1m', name: 'Shibor 1月' },
+            { key: '3m', name: 'Shibor 3月' },
+            { key: '1y', name: 'Shibor 1年' },
+          ];
+
+          for (const f of shiborFields) {
+            const value = toNum((latest as any)[f.key]);
+            if (Number.isNaN(value)) continue;
+            const prevValue = prev ? toNum((prev as any)[f.key]) : undefined;
+            macroItems.push({
+              id: `SHIBOR_${f.key}`,
+              name: f.name,
+              region: 'CN',
+              value,
+              unit: '%',
+              period: date,
+              prev_value: Number.isNaN(prevValue as any) ? undefined : prevValue,
+              prev_period: prevDate,
+              frequency: '日度',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch shibor from Tushare', err);
+      }
+
+      // LPR（月度利率）
+      try {
+        const startDate = getLastMonthStartDate();
+        const endDate = formatDateYYYYMMDD(now);
+        const rows = await callTushare(
+          'lpr',
+          { start_date: startDate, end_date: endDate },
+          ['date', '1y', '5y'],
+        );
+        if (rows.length) {
+          const { latest, prev } = pickLatestPair(rows, 'date');
+          const date = String(latest.date ?? '');
+          const prevDate = prev ? String(prev.date ?? '') : undefined;
+
+          const lprFields: { key: string; name: string }[] = [
+            { key: '1y', name: 'LPR 1年' },
+            { key: '5y', name: 'LPR 5年' },
+          ];
+
+          for (const f of lprFields) {
+            const value = toNum((latest as any)[f.key]);
+            if (Number.isNaN(value)) continue;
+            const prevValue = prev ? toNum((prev as any)[f.key]) : undefined;
+            macroItems.push({
+              id: `LPR_${f.key}`,
+              name: f.name,
+              region: 'CN',
+              value,
+              unit: '%',
+              period: date,
+              prev_value: Number.isNaN(prevValue as any) ? undefined : prevValue,
+              prev_period: prevDate,
+              frequency: '月度',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch lpr from Tushare', err);
+      }
+
+      // CPI（同比，月度）
+      try {
+        const rows = await callTushare(
+          'cn_cpi',
+          { start_m: monthStart, end_m: monthEnd },
+          ['month', 'nt_yoy'],
+        );
+        if (rows.length) {
+          const { latest, prev } = pickLatestPair(rows, 'month');
+          const month = String(latest.month ?? '');
+          const prevMonth = prev ? String(prev.month ?? '') : undefined;
+          const value = toNum((latest as any).nt_yoy);
+          if (!Number.isNaN(value)) {
+            const prevValue = prev ? toNum((prev as any).nt_yoy) : undefined;
+            macroItems.push({
+              id: 'CN_CPI_YOY',
+              name: '中国CPI同比',
+              region: 'CN',
+              value,
+              unit: '%',
+              period: formatMonth(month),
+              prev_value: Number.isNaN(prevValue as any) ? undefined : prevValue,
+              prev_period: prevMonth ? formatMonth(prevMonth) : undefined,
+              frequency: '月度',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch cn_cpi from Tushare', err);
+      }
+
+      // PPI（同比，月度）
+      try {
+        const rows = await callTushare(
+          'cn_ppi',
+          { start_m: monthStart, end_m: monthEnd },
+          ['month', 'ppi_yoy'],
+        );
+        if (rows.length) {
+          const { latest, prev } = pickLatestPair(rows, 'month');
+          const month = String(latest.month ?? '');
+          const prevMonth = prev ? String(prev.month ?? '') : undefined;
+          const value = toNum((latest as any).ppi_yoy);
+          if (!Number.isNaN(value)) {
+            const prevValue = prev ? toNum((prev as any).ppi_yoy) : undefined;
+            macroItems.push({
+              id: 'CN_PPI_YOY',
+              name: '中国PPI同比',
+              region: 'CN',
+              value,
+              unit: '%',
+              period: formatMonth(month),
+              prev_value: Number.isNaN(prevValue as any) ? undefined : prevValue,
+              prev_period: prevMonth ? formatMonth(prevMonth) : undefined,
+              frequency: '月度',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch cn_ppi from Tushare', err);
+      }
+
+      // 货币供应量 M2（同比，月度）
+      try {
+        const rows = await callTushare(
+          'cn_m',
+          { start_m: monthStart, end_m: monthEnd },
+          ['month', 'm2_yoy'],
+        );
+        if (rows.length) {
+          const { latest, prev } = pickLatestPair(rows, 'month');
+          const month = String(latest.month ?? '');
+          const prevMonth = prev ? String(prev.month ?? '') : undefined;
+          const value = toNum((latest as any).m2_yoy);
+          if (!Number.isNaN(value)) {
+            const prevValue = prev ? toNum((prev as any).m2_yoy) : undefined;
+            macroItems.push({
+              id: 'CN_M2_YOY',
+              name: '中国M2同比',
+              region: 'CN',
+              value,
+              unit: '%',
+              period: formatMonth(month),
+              prev_value: Number.isNaN(prevValue as any) ? undefined : prevValue,
+              prev_period: prevMonth ? formatMonth(prevMonth) : undefined,
+              frequency: '月度',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch cn_m from Tushare', err);
+      }
+
+      // GDP（季度，同比）
+      try {
+        const rows = await callTushare(
+          'cn_gdp',
+          { start_q: qStart, end_q: qEnd },
+          ['quarter', 'gdp_yoy'],
+        );
+        if (rows.length) {
+          const { latest, prev } = pickLatestPair(rows, 'quarter');
+          const quarter = String((latest as any).quarter ?? '');
+          const prevQuarter = prev ? String((prev as any).quarter ?? '') : undefined;
+          const value = toNum((latest as any).gdp_yoy);
+          if (!Number.isNaN(value)) {
+            const prevValue = prev ? toNum((prev as any).gdp_yoy) : undefined;
+            macroItems.push({
+              id: 'CN_GDP_YOY',
+              name: '中国GDP同比',
+              region: 'CN',
+              value,
+              unit: '%',
+              period: formatQuarter(quarter),
+              prev_value: Number.isNaN(prevValue as any) ? undefined : prevValue,
+              prev_period: prevQuarter ? formatQuarter(prevQuarter) : undefined,
+              frequency: '季度',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch cn_gdp from Tushare', err);
+      }
+
+      // 若宏观接口不可用，则回退到示例数据（但保留单位/频率）
+      macro =
+        macroItems.length > 0
+          ? macroItems.map((m) => ({
+              ...m,
+              history: [
+                {
+                  period: m.period,
+                  value: m.value,
+                },
+              ],
+            }))
+          : DEMO_MACRO.map((m) => ({
+              ...m,
+              frequency: '月度/季度',
+              history: [
+                {
+                  period: m.period,
+                  value: m.value,
+                },
+              ],
+            }));
+
+      macroUpdatedAt = Date.now();
+    }
 
     if (!market.length) {
       // If all Tushare calls failed, fall back completely to demo data.
@@ -359,43 +720,6 @@ export const GET = async () => {
       return Response.json(summary);
     }
 
-    // 为滚动条构造更丰富的市场数据：每个指数取最近 5 个交易日
-    const tickerMarketBase: MarketItem[] = [];
-    const takeDays = 5;
-
-    for (const m of market) {
-      const history = m.history ?? [];
-      if (!history.length) continue;
-
-      const len = history.length;
-      const startIdx = Math.max(0, len - takeDays);
-
-      for (let i = startIdx; i < len; i++) {
-        const point = history[i];
-        const prevPoint = i > 0 ? history[i - 1] : point;
-
-        tickerMarketBase.push({
-          id: `${m.id}-${point.trade_date}`,
-          name: `${m.name} ${String(point.trade_date).slice(4, 8)}`, // 例如 1211
-          region: m.region,
-          close: point.close,
-          pct_chg: point.pct_chg,
-          trade_date: point.trade_date,
-          prev_close: prevPoint.close,
-          unit: '点',
-          frequency: '日度',
-        });
-      }
-    }
-
-    // 确保经济数据条目不少于 100 条，不足则循环填充
-    let tickerMarket: MarketItem[] = [...tickerMarketBase];
-    const baseLen = tickerMarketBase.length;
-    while (tickerMarket.length < 100 && baseLen > 0) {
-      const needed = Math.min(baseLen, 100 - tickerMarket.length);
-      tickerMarket = tickerMarket.concat(tickerMarketBase.slice(0, needed));
-    }
-
     const summary: EconomySummary = {
       source: 'tushare',
       market,
@@ -403,8 +727,19 @@ export const GET = async () => {
       tickerMarket,
     };
 
-    // Cache fresh data for the next day
-    saveCache(summary);
+    const shouldWriteCache =
+      !cached ||
+      marketUpdatedAt !== cachedMarketUpdatedAt ||
+      macroUpdatedAt !== cachedMacroUpdatedAt;
+
+    if (shouldWriteCache) {
+      saveCache({
+        updatedAt: Date.now(),
+        marketUpdatedAt,
+        macroUpdatedAt,
+        data: summary,
+      });
+    }
 
     return Response.json(summary);
   } catch (err) {
