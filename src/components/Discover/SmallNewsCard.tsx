@@ -1,6 +1,15 @@
 import { Discover } from '@/app/discover/page';
 import Link from 'next/link';
 
+const getThumbnailSrc = (thumbnail: string | undefined) => {
+  if (!thumbnail) return '/dr-lemon-logo.svg';
+  try {
+    return new URL(thumbnail).toString();
+  } catch {
+    return thumbnail;
+  }
+};
+
 const SmallNewsCard = ({ item }: { item: Discover }) => (
   <Link
     href={`/?q=Summary: ${item.url}`}
@@ -10,11 +19,7 @@ const SmallNewsCard = ({ item }: { item: Discover }) => (
     <div className="relative aspect-video overflow-hidden">
       <img
         className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
-        src={
-          new URL(item.thumbnail).origin +
-          new URL(item.thumbnail).pathname +
-          `?id=${new URL(item.thumbnail).searchParams.get('id')}`
-        }
+        src={getThumbnailSrc(item.thumbnail)}
         alt={item.title}
       />
     </div>

@@ -11,7 +11,7 @@ export interface Discover {
   title: string;
   content: string;
   url: string;
-  thumbnail: string;
+  thumbnail?: string;
 }
 
 const topics: { key: string; display: string }[] = [
@@ -47,6 +47,7 @@ const Page = () => {
     try {
       const res = await fetch(`/api/discover?topic=${topic}`, {
         method: 'GET',
+        cache: 'no-store',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -58,9 +59,11 @@ const Page = () => {
         throw new Error(data.message);
       }
 
-      data.blogs = data.blogs.filter((blog: Discover) => blog.thumbnail);
-
-      setDiscover(data.blogs);
+      setDiscover(
+        (data.blogs as Discover[]).filter(
+          (blog) => blog && typeof blog.url === 'string' && blog.url.length > 0,
+        ),
+      );
     } catch (err: any) {
       console.error('Error fetching data:', err.message);
       toast.error('Error fetching data');

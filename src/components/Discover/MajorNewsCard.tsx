@@ -1,6 +1,15 @@
 import { Discover } from '@/app/discover/page';
 import Link from 'next/link';
 
+const getThumbnailSrc = (thumbnail: string | undefined) => {
+  if (!thumbnail) return '/dr-lemon-logo.svg';
+  try {
+    return new URL(thumbnail).toString();
+  } catch {
+    return thumbnail;
+  }
+};
+
 const MajorNewsCard = ({
   item,
   isLeft = true,
@@ -18,11 +27,7 @@ const MajorNewsCard = ({
         <div className="relative w-80 h-full overflow-hidden rounded-2xl flex-shrink-0">
           <img
             className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-500"
-            src={
-              new URL(item.thumbnail).origin +
-              new URL(item.thumbnail).pathname +
-              `?id=${new URL(item.thumbnail).searchParams.get('id')}`
-            }
+            src={getThumbnailSrc(item.thumbnail)}
             alt={item.title}
           />
         </div>
@@ -54,11 +59,7 @@ const MajorNewsCard = ({
         <div className="relative w-80 h-full overflow-hidden rounded-2xl flex-shrink-0">
           <img
             className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-500"
-            src={
-              new URL(item.thumbnail).origin +
-              new URL(item.thumbnail).pathname +
-              `?id=${new URL(item.thumbnail).searchParams.get('id')}`
-            }
+            src={getThumbnailSrc(item.thumbnail)}
             alt={item.title}
           />
         </div>
