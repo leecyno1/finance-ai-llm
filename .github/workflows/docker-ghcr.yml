@@ -18,8 +18,10 @@ jobs:
         variant:
           - name: full
             dockerfile: Dockerfile
+            platforms: linux/amd64
           - name: slim
             dockerfile: Dockerfile.slim
+            platforms: linux/amd64,linux/arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -51,8 +53,9 @@ jobs:
         with:
           context: .
           file: ${{ matrix.variant.dockerfile }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.variant.platforms }}
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
+          provenance: false
+          sbom: false
