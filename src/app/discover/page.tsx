@@ -130,6 +130,11 @@ const Page = () => {
           </div>
         ) : (
           <div className="flex flex-col gap-4 pb-28 pt-5 lg:pb-8 w-full">
+            {discover && discover.length === 0 && (
+              <div className="px-2 py-10 text-center text-sm text-black/60 dark:text-white/60">
+                暂无可显示内容。请在设置中配置可用的 SearXNG URL（或稍后重试）。
+              </div>
+            )}
             <div className="block lg:hidden">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {discover?.map((item, i) => (

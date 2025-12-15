@@ -71,6 +71,14 @@ type FinanceBlog = {
   thumbnail?: string;
 };
 
+const stripTags = (html: string) =>
+  html
+    .replace(/<!\[CDATA\[/g, '')
+    .replace(/\]\]>/g, '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 const parseSinaRss = (xml: string): FinanceBlog[] => {
   const items: FinanceBlog[] = [];
 
@@ -99,6 +107,58 @@ const parseSinaRss = (xml: string): FinanceBlog[] => {
       url,
       content: description,
       thumbnail: '',
+    });
+  }
+
+  return items;
+};
+
+const parseGenericRss = (xml: string): FinanceBlog[] => {
+  const items: FinanceBlog[] = [];
+  const itemRegex = /<item[\s\S]*?<\/item>/g;
+  const matches = xml.match(itemRegex) || [];
+
+  const extractTag = (itemXml: string, tag: string) => {
+    const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`);
+    const match = itemXml.match(regex);
+    if (!match) return '';
+    return stripTags(match[1]);
+  };
+
+  const extractAttr = (itemXml: string, tag: string, attr: string) => {
+    const regex = new RegExp(
+      `<${tag}[^>]*?\\s${attr}=\"([^\"]+)\"[^>]*?>`,
+      'i',
+    );
+    const match = itemXml.match(regex);
+    return match?.[1] ?? '';
+  };
+
+  for (const itemXml of matches) {
+    const title = extractTag(itemXml, 'title');
+    let url = extractTag(itemXml, 'link');
+    const description =
+      extractTag(itemXml, 'description') || extractTag(itemXml, 'summary');
+
+    // some RSS uses <guid isPermaLink="true"> as link
+    if (!url) {
+      const guid = extractTag(itemXml, 'guid');
+      if (guid.startsWith('http')) url = guid;
+    }
+
+    const enclosure = extractAttr(itemXml, 'enclosure', 'url');
+    const mediaContent = extractAttr(itemXml, 'media:content', 'url');
+    const mediaThumb = extractAttr(itemXml, 'media:thumbnail', 'url');
+
+    const thumbnail = mediaThumb || mediaContent || enclosure || '';
+
+    if (!title || !url) continue;
+
+    items.push({
+      title,
+      url,
+      content: description,
+      thumbnail,
     });
   }
 
@@ -139,6 +199,69 @@ const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
   });
 };
 
+const RSS_BY_TOPIC: Record<Topic, string[]> = {
+  tech: [
+    'https://news.google.com/rss/search?q=technology%20OR%20AI%20OR%20science&hl=en-US&gl=US&ceid=US:en',
+    'https://www.theverge.com/rss/index.xml',
+    'https://feeds.feedburner.com/TechCrunch/',
+  ],
+  finance: [
+    'https://news.google.com/rss/search?q=finance%20OR%20stock%20OR%20macro%20OR%20interest%20rate&hl=en-US&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=%E8%B4%A2%E7%BB%8F%20OR%20%E8%82%A1%E5%B8%82%20OR%20%E5%AE%8F%E8%A7%82%20OR%20%E5%88%A9%E7%8E%87&hl=zh-CN&gl=CN&ceid=CN:zh-Hans',
+  ],
+  art: [
+    'https://news.google.com/rss/search?q=art%20OR%20culture%20OR%20museum&hl=en-US&gl=US&ceid=US:en',
+  ],
+  sports: [
+    'https://news.google.com/rss/search?q=sports%20OR%20football%20OR%20basketball&hl=en-US&gl=US&ceid=US:en',
+  ],
+  entertainment: [
+    'https://news.google.com/rss/search?q=entertainment%20OR%20movies%20OR%20tv&hl=en-US&gl=US&ceid=US:en',
+  ],
+};
+
+const fetchBlogsFromRss = async (urls: string[]): Promise<FinanceBlog[]> => {
+  const results = await Promise.allSettled(
+    urls.map(async (url) => {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error(`RSS HTTP error: ${res.status}`);
+      }
+      const xml = await res.text();
+      return parseGenericRss(xml);
+    }),
+  );
+
+  const blogs = results
+    .filter((r) => r.status === 'fulfilled')
+    .flatMap(
+      (r) =>
+        (r as PromiseFulfilledResult<ReturnType<typeof parseGenericRss>>).value,
+    );
+
+  const seen = new Set<string>();
+  return blogs.filter((b) => {
+    const key = b.url.toLowerCase().trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const toDiscoverItem = (item: any): FinanceBlog => ({
+  title: String(item.title ?? ''),
+  url: String(item.url ?? ''),
+  content: String(item.content ?? ''),
+  thumbnail:
+    String(
+      item.thumbnail ??
+        item.thumbnail_src ??
+        item.img_src ??
+        item.image ??
+        '',
+    ) || '',
+});
+
 export const GET = async (req: Request) => {
   try {
     const params = new URL(req.url).searchParams;
@@ -174,10 +297,11 @@ export const GET = async (req: Request) => {
     let data = [];
 
     if (!searxngURL) {
-      // 其它主题在未配置 SearXNG 时返回空数组
+      // 其它主题在未配置 SearXNG 时，回退到公开 RSS（保证 Discover 有内容）
+      const rssBlogs = await fetchBlogsFromRss(RSS_BY_TOPIC[topic] ?? []);
       return Response.json(
         {
-          blogs: [],
+          blogs: rssBlogs.map(toDiscoverItem),
         },
         { status: 200 },
       );
@@ -223,10 +347,11 @@ export const GET = async (req: Request) => {
         ).results;
       }
     } catch (err) {
-      console.error('Discover searxng failed, fallback to demo', err);
+      console.error('Discover searxng failed, fallback to rss', err);
+      const rssBlogs = await fetchBlogsFromRss(RSS_BY_TOPIC[topic] ?? []);
       return Response.json(
         {
-          blogs: DEMO_FINANCE_BLOGS,
+          blogs: rssBlogs.map(toDiscoverItem),
         },
         { status: 200 },
       );
@@ -234,7 +359,7 @@ export const GET = async (req: Request) => {
 
     return Response.json(
       {
-        blogs: data,
+        blogs: (data as any[]).map(toDiscoverItem),
       },
       {
         status: 200,
