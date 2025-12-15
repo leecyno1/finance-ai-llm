@@ -71,22 +71,52 @@ type FinanceBlog = {
   thumbnail?: string;
 };
 
+const stripCdata = (value: string) =>
+  value.replace(/<!\[CDATA\[/g, '').replace(/\]\]>/g, '').trim();
+
+const decodeHtmlEntities = (input: string) => {
+  const map: Record<string, string> = {
+    lt: '<',
+    gt: '>',
+    amp: '&',
+    quot: '"',
+    apos: "'",
+    nbsp: ' ',
+  };
+
+  return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (m, entity) => {
+    if (!entity) return m;
+    if (entity[0] === '#') {
+      const hex = entity[1]?.toLowerCase() === 'x';
+      const raw = hex ? entity.slice(2) : entity.slice(1);
+      const codePoint = Number.parseInt(raw, hex ? 16 : 10);
+      if (!Number.isFinite(codePoint)) return m;
+      try {
+        return String.fromCodePoint(codePoint);
+      } catch {
+        return m;
+      }
+    }
+    const named = entity.toLowerCase();
+    return map[named] ?? m;
+  });
+};
+
 const stripTags = (html: string) =>
-  html
-    .replace(/<!\[CDATA\[/g, '')
-    .replace(/\]\]>/g, '')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
+const normalizeText = (value: string) => {
+  if (!value) return '';
+  const noCdata = stripCdata(value);
+  const decoded = decodeHtmlEntities(noCdata);
+  return stripTags(decoded);
+};
 
 const parseSinaRss = (xml: string): FinanceBlog[] => {
   const items: FinanceBlog[] = [];
 
   const itemRegex = /<item[\s\S]*?<\/item>/g;
   const matches = xml.match(itemRegex) || [];
-
-  const stripCdata = (value: string) =>
-    value.replace('<![CDATA[', '').replace(']]>', '').trim();
 
   const extractTag = (itemXml: string, tag: string) => {
     const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`);
@@ -96,9 +126,9 @@ const parseSinaRss = (xml: string): FinanceBlog[] => {
   };
 
   for (const itemXml of matches) {
-    const title = extractTag(itemXml, 'title');
-    const url = extractTag(itemXml, 'link');
-    const description = extractTag(itemXml, 'description');
+    const title = normalizeText(extractTag(itemXml, 'title'));
+    const url = decodeHtmlEntities(extractTag(itemXml, 'link')).trim();
+    const description = normalizeText(extractTag(itemXml, 'description'));
 
     if (!title || !url) continue;
 
@@ -118,11 +148,11 @@ const parseGenericRss = (xml: string): FinanceBlog[] => {
   const itemRegex = /<item[\s\S]*?<\/item>/g;
   const matches = xml.match(itemRegex) || [];
 
-  const extractTag = (itemXml: string, tag: string) => {
+  const extractTagRaw = (itemXml: string, tag: string) => {
     const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`);
     const match = itemXml.match(regex);
     if (!match) return '';
-    return stripTags(match[1]);
+    return stripCdata(match[1]);
   };
 
   const extractAttr = (itemXml: string, tag: string, attr: string) => {
@@ -135,14 +165,19 @@ const parseGenericRss = (xml: string): FinanceBlog[] => {
   };
 
   for (const itemXml of matches) {
-    const title = extractTag(itemXml, 'title');
-    let url = extractTag(itemXml, 'link');
-    const description =
-      extractTag(itemXml, 'description') || extractTag(itemXml, 'summary');
+    const titleRaw = extractTagRaw(itemXml, 'title');
+    const linkRaw = extractTagRaw(itemXml, 'link');
+    const descriptionRaw =
+      extractTagRaw(itemXml, 'description') || extractTagRaw(itemXml, 'summary');
+
+    const title = normalizeText(titleRaw);
+    let url = decodeHtmlEntities(linkRaw).trim();
+    const descriptionDecoded = decodeHtmlEntities(stripCdata(descriptionRaw));
+    const description = stripTags(descriptionDecoded);
 
     // some RSS uses <guid isPermaLink="true"> as link
     if (!url) {
-      const guid = extractTag(itemXml, 'guid');
+      const guid = decodeHtmlEntities(extractTagRaw(itemXml, 'guid')).trim();
       if (guid.startsWith('http')) url = guid;
     }
 
@@ -150,7 +185,14 @@ const parseGenericRss = (xml: string): FinanceBlog[] => {
     const mediaContent = extractAttr(itemXml, 'media:content', 'url');
     const mediaThumb = extractAttr(itemXml, 'media:thumbnail', 'url');
 
-    const thumbnail = mediaThumb || mediaContent || enclosure || '';
+    let thumbnail = mediaThumb || mediaContent || enclosure || '';
+    if (!thumbnail && descriptionDecoded) {
+      // Google News and some feeds embed images in the description HTML (sometimes entity-escaped).
+      const match = descriptionDecoded.match(
+        /<img[^>]*\ssrc=["']([^"']+)["']/i,
+      );
+      if (match?.[1]) thumbnail = match[1];
+    }
 
     if (!title || !url) continue;
 
@@ -249,9 +291,9 @@ const fetchBlogsFromRss = async (urls: string[]): Promise<FinanceBlog[]> => {
 };
 
 const toDiscoverItem = (item: any): FinanceBlog => ({
-  title: String(item.title ?? ''),
+  title: normalizeText(String(item.title ?? '')),
   url: String(item.url ?? ''),
-  content: String(item.content ?? ''),
+  content: normalizeText(String(item.content ?? '')),
   thumbnail:
     String(
       item.thumbnail ??
