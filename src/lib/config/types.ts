@@ -73,6 +73,9 @@ type Config = {
   search: {
     [key: string]: any;
   };
+  economy: {
+    [key: string]: any;
+  };
 };
 
 type EnvMap = {
@@ -93,6 +96,7 @@ type UIConfigSections = {
   personalization: UIConfigField[];
   modelProviders: ModelProviderUISection[];
   search: UIConfigField[];
+  economy: UIConfigField[];
 };
 
 export type {
@@ -102,6 +106,7 @@ export type {
   UIConfigSections,
   SelectUIConfigField,
   StringUIConfigField,
+  PasswordUIConfigField,
   ModelProviderUISection,
   ConfigModelProvider,
   TextareaUIConfigField,

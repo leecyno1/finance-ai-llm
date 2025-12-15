@@ -19,6 +19,9 @@ class ConfigManager {
     search: {
       searxngURL: '',
     },
+    economy: {
+      tushareToken: '',
+    },
   };
   uiConfigSections: UIConfigSections = {
     preferences: [
@@ -114,6 +117,20 @@ class ConfigManager {
         env: 'SEARXNG_API_URL',
       },
     ],
+    economy: [
+      {
+        name: 'TuShare Token',
+        key: 'tushareToken',
+        type: 'password',
+        required: false,
+        description:
+          'TuShare Pro Token，用于拉取真实市场与宏观数据（服务端保存，不会返回到浏览器）。',
+        placeholder: '粘贴你的 TuShare token（不会明文展示）',
+        default: '',
+        scope: 'server',
+        env: 'TUSHARE_TOKEN',
+      },
+    ],
   };
 
   constructor() {
@@ -168,7 +185,24 @@ class ConfigManager {
   }
 
   private migrateConfig(config: Config): Config {
-    /* TODO: Add migrations */
+    // Lightweight "migration"/backfill so older config files keep working when
+    // new sections/fields are added.
+    if (!config || typeof config !== 'object') {
+      return JSON.parse(JSON.stringify(this.currentConfig));
+    }
+
+    config.version = this.configVersion;
+    config.setupComplete = config.setupComplete ?? false;
+    config.preferences = config.preferences ?? {};
+    config.personalization = config.personalization ?? {};
+    config.modelProviders = config.modelProviders ?? [];
+
+    config.search = config.search ?? { searxngURL: '' };
+    config.search.searxngURL = config.search.searxngURL ?? '';
+
+    config.economy = config.economy ?? { tushareToken: '' };
+    config.economy.tushareToken = config.economy.tushareToken ?? '';
+
     return config;
   }
 
@@ -230,6 +264,14 @@ class ConfigManager {
     this.uiConfigSections.search.forEach((f) => {
       if (f.env && !this.currentConfig.search[f.key]) {
         this.currentConfig.search[f.key] =
+          process.env[f.env] ?? f.default ?? '';
+      }
+    });
+
+    /* economy section */
+    this.uiConfigSections.economy.forEach((f) => {
+      if (f.env && !this.currentConfig.economy[f.key]) {
+        this.currentConfig.economy[f.key] =
           process.env[f.env] ?? f.default ?? '';
       }
     });

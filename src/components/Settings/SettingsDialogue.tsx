@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   BrainCog,
   ChevronLeft,
+  BarChart3,
   Search,
   Sliders,
   ToggleRight,
@@ -17,6 +18,7 @@ import Models from './Sections/Models/Section';
 import SearchSection from './Sections/Search';
 import Select from '@/components/ui/Select';
 import Personalization from './Sections/Personalization';
+import Economy from './Sections/Economy';
 
 const sections = [
   {
@@ -50,6 +52,14 @@ const sections = [
     icon: Search,
     component: SearchSection,
     dataAdd: 'search',
+  },
+  {
+    key: 'economy',
+    name: 'Economy',
+    description: 'Manage TuShare and data settings.',
+    icon: BarChart3,
+    component: Economy,
+    dataAdd: 'economy',
   },
 ];
 

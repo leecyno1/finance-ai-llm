@@ -1,3 +1,5 @@
+import { getTushareToken } from '@/lib/config/serverRegistry';
+
 type TushareRow = Record<string, string | number | null>;
 
 type TushareResponse = {
@@ -11,15 +13,14 @@ type TushareResponse = {
 
 const TUSHARE_ENDPOINT = 'https://api.tushare.pro';
 
-export const hasTushareToken = () =>
-  !!(process.env.TUSHARE_TOKEN || process.env.TUSHARE_API_TOKEN);
+export const hasTushareToken = () => !!getTushareToken();
 
 export const callTushare = async (
   apiName: string,
   params: Record<string, any>,
   fields: string[],
 ): Promise<TushareRow[]> => {
-  const token = process.env.TUSHARE_TOKEN || process.env.TUSHARE_API_TOKEN;
+  const token = getTushareToken();
   if (!token) {
     throw new Error('Tushare token not configured');
   }

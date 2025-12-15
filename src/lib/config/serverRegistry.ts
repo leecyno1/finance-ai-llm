@@ -13,3 +13,9 @@ export const getConfiguredModelProviderById = (
 
 export const getSearxngURL = () =>
   configManager.getConfig('search.searxngURL', '');
+
+export const getTushareToken = () =>
+  configManager.getConfig('economy.tushareToken', '') ||
+  process.env.TUSHARE_TOKEN ||
+  process.env.TUSHARE_API_TOKEN ||
+  '';

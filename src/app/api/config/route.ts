@@ -34,6 +34,11 @@ export const GET = async (req: NextRequest) => {
       },
     );
 
+    // Never expose non-model secrets (e.g. TuShare token) to the client.
+    if (values.economy?.tushareToken) {
+      values.economy.tushareToken = '********';
+    }
+
     return NextResponse.json({
       values,
       fields,
@@ -51,13 +56,25 @@ export const POST = async (req: NextRequest) => {
   try {
     const body: SaveConfigBody = await req.json();
 
-    if (!body.key || !body.value) {
+    if (!body.key || body.value === undefined) {
       return Response.json(
         {
           message: 'Key and value are required.',
         },
         {
           status: 400,
+        },
+      );
+    }
+
+    // Avoid accidentally overwriting secrets with masked placeholders.
+    if (body.value === '********') {
+      return Response.json(
+        {
+          message: 'Config updated successfully.',
+        },
+        {
+          status: 200,
         },
       );
     }
