@@ -53,12 +53,38 @@ const MessageInput = () => {
       onSubmit={(e) => {
         if (loading) return;
         e.preventDefault();
+        const trimmed = message.trim();
+        if (trimmed === '8899174') {
+          try {
+            const next =
+              localStorage.getItem('showSettings') === 'true'
+                ? 'false'
+                : 'true';
+            localStorage.setItem('showSettings', next);
+            window.dispatchEvent(new Event('settings-button-revealed'));
+          } catch {}
+          setMessage('');
+          return;
+        }
         sendMessage(message);
         setMessage('');
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && !e.shiftKey && !loading) {
           e.preventDefault();
+          const trimmed = message.trim();
+          if (trimmed === '8899174') {
+            try {
+              const next =
+                localStorage.getItem('showSettings') === 'true'
+                  ? 'false'
+                  : 'true';
+              localStorage.setItem('showSettings', next);
+              window.dispatchEvent(new Event('settings-button-revealed'));
+            } catch {}
+            setMessage('');
+            return;
+          }
           sendMessage(message);
           setMessage('');
         }
