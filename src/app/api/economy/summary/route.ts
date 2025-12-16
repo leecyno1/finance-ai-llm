@@ -1,6 +1,11 @@
 import fs from 'fs';
 import path from 'node:path';
 import { callTushare, hasTushareToken, TushareApiError } from '@/lib/economy/tushare';
+import {
+  fetchStooqDaily,
+  fetchTencentKlineDaily,
+  fetchTreasuryYieldCurveLatest,
+} from '@/lib/economy/public';
 
 type MarketHistoryPoint = {
   trade_date: string;
@@ -86,6 +91,18 @@ const getLastMonthStartDate = () => {
   date.setDate(date.getDate() - 31);
   return formatDateYYYYMMDD(date);
 };
+
+const formatDateYYYYMMDDDashed = (date: Date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const toYYYYMMDD = (date: Date) =>
+  `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(
+    date.getDate(),
+  ).padStart(2, '0')}`;
 
 const getLast12MonthsStartMonth = () => {
   const date = new Date();
@@ -305,15 +322,244 @@ const INDEX_SERIES = [
   { id: '399300.SZ', name: '沪深300(深证)', region: 'CN' },
 ];
 
+const buildTickerMarketFromHistory = (
+  market: (MarketItem & { history?: MarketHistoryPoint[] })[],
+) => {
+  const tickerMarketBase: MarketItem[] = [];
+  const takeDays = 5;
+  for (const m of market) {
+    const history = m.history ?? [];
+    if (!history.length) continue;
+
+    const len = history.length;
+    const startIdx = Math.max(0, len - takeDays);
+
+    for (let i = startIdx; i < len; i++) {
+      const point = history[i];
+      const prevPoint = i > 0 ? history[i - 1] : point;
+
+      tickerMarketBase.push({
+        id: `${m.id}-${point.trade_date}`,
+        name: `${m.name} ${String(point.trade_date).slice(4, 8)}`,
+        region: m.region,
+        close: point.close,
+        pct_chg: point.pct_chg,
+        trade_date: point.trade_date,
+        prev_close: prevPoint.close,
+        unit: m.unit,
+        frequency: m.frequency,
+      });
+    }
+  }
+
+  let nextTickerMarket: MarketItem[] = [...tickerMarketBase];
+  const baseLen = tickerMarketBase.length;
+  while (nextTickerMarket.length < 100 && baseLen > 0) {
+    const needed = Math.min(baseLen, 100 - nextTickerMarket.length);
+    nextTickerMarket = nextTickerMarket.concat(
+      tickerMarketBase.slice(0, needed),
+    );
+  }
+  return nextTickerMarket;
+};
+
+const getPublicEconomySummary = async (opts?: {
+  reason?: EconomySummary['reason'];
+  error?: EconomySummary['error'];
+}): Promise<EconomySummary> => {
+  const now = new Date();
+  const from = new Date(now);
+  from.setDate(from.getDate() - 31);
+  const d1 = toYYYYMMDD(from);
+  const d2 = toYYYYMMDD(now);
+
+  const marketSeries = [
+    // CN indices (Tencent Kline)
+    { id: 'sh000001', name: '上证指数', region: 'CN', kind: 'tencent' as const },
+    { id: 'sz399001', name: '深证成指', region: 'CN', kind: 'tencent' as const },
+    { id: 'sz399006', name: '创业板指', region: 'CN', kind: 'tencent' as const },
+    { id: 'sh000300', name: '沪深300', region: 'CN', kind: 'tencent' as const },
+    // Global indices (Stooq)
+    { id: '^spx', name: 'S&P 500', region: 'US', kind: 'stooq' as const },
+    { id: '^ndx', name: 'NASDAQ 100', region: 'US', kind: 'stooq' as const },
+    { id: '^dji', name: '道琼斯工业指数', region: 'US', kind: 'stooq' as const },
+    { id: '^hsi', name: '恒生指数', region: 'HK', kind: 'stooq' as const },
+    { id: '^nkx', name: '日经225', region: 'JP', kind: 'stooq' as const },
+    { id: '^dax', name: '德国DAX', region: 'EU', kind: 'stooq' as const },
+    { id: '^cac', name: '法国CAC40', region: 'EU', kind: 'stooq' as const },
+    { id: '^ukx', name: '英国FTSE 100', region: 'EU', kind: 'stooq' as const },
+  ];
+
+  const market: (MarketItem & { history?: MarketHistoryPoint[] })[] = [];
+
+  for (const s of marketSeries) {
+    try {
+      if (s.kind === 'stooq') {
+        const rows = await fetchStooqDaily(s.id, {
+          fromYYYYMMDD: d1,
+          toYYYYMMDD: d2,
+        });
+        if (rows.length < 2) continue;
+        rows.sort((a, b) => a.date.localeCompare(b.date));
+        const latest = rows[rows.length - 1];
+        const prev = rows[rows.length - 2];
+        const pct = prev.close
+          ? ((latest.close - prev.close) / prev.close) * 100
+          : 0;
+
+        market.push({
+          id: s.id,
+          name: s.name,
+          region: s.region,
+          close: latest.close,
+          pct_chg: pct,
+          trade_date: latest.date.replace(/-/g, ''),
+          unit: '点',
+          frequency: '日度',
+          history: rows.map((r, idx) => ({
+            trade_date: r.date.replace(/-/g, ''),
+            close: r.close,
+            pct_chg:
+              idx === 0 || rows[idx - 1].close === 0
+                ? 0
+                : ((r.close - rows[idx - 1].close) / rows[idx - 1].close) *
+                  100,
+          })),
+        });
+      } else {
+        const rows = await fetchTencentKlineDaily(s.id, 60);
+        if (rows.length < 2) continue;
+        rows.sort((a, b) => a.date.localeCompare(b.date));
+        const latest = rows[rows.length - 1];
+
+        market.push({
+          id: s.id,
+          name: s.name,
+          region: s.region,
+          close: latest.close,
+          pct_chg: latest.pct_chg,
+          trade_date: latest.date.replace(/-/g, ''),
+          unit: '点',
+          frequency: '日度',
+          history: rows.map((r) => ({
+            trade_date: r.date.replace(/-/g, ''),
+            close: r.close,
+            pct_chg: r.pct_chg,
+          })),
+        });
+      }
+    } catch (err) {
+      console.error('Public market fetch failed:', s.id, err);
+    }
+  }
+
+  const { latest: ycLatest, prev: ycPrev } =
+    await fetchTreasuryYieldCurveLatest().catch((err) => {
+      console.error('Treasury yield fetch failed', err);
+      return { latest: undefined, prev: undefined };
+    });
+
+  const cached = loadCache();
+  const cachedMacro = (cached?.data?.macro as any[]) ?? [];
+  const findPrev = (id: string) => {
+    const hit = cachedMacro.find((m) => m?.id === id);
+    return hit
+      ? {
+          value: Number(hit?.value),
+          period: String(hit?.period ?? ''),
+        }
+      : undefined;
+  };
+
+  const macro: (MacroItem & { history?: MacroHistoryPoint[] })[] = [];
+
+  if (ycLatest?.y10 !== undefined) {
+    macro.push({
+      id: 'US_10Y_YIELD',
+      name: '美国10年国债收益率',
+      region: 'US',
+      value: ycLatest.y10,
+      unit: '%',
+      period: ycLatest.date,
+      prev_value: ycPrev?.y10,
+      prev_period: ycPrev?.date,
+      frequency: '日度',
+      history: [
+        { period: ycLatest.date, value: ycLatest.y10 },
+        ...(ycPrev?.y10 !== undefined
+          ? [{ period: ycPrev.date, value: ycPrev.y10 }]
+          : []),
+      ],
+    });
+  }
+  if (ycLatest?.y2 !== undefined) {
+    macro.push({
+      id: 'US_2Y_YIELD',
+      name: '美国2年国债收益率',
+      region: 'US',
+      value: ycLatest.y2,
+      unit: '%',
+      period: ycLatest.date,
+      prev_value: ycPrev?.y2,
+      prev_period: ycPrev?.date,
+      frequency: '日度',
+      history: [
+        { period: ycLatest.date, value: ycLatest.y2 },
+        ...(ycPrev?.y2 !== undefined
+          ? [{ period: ycPrev.date, value: ycPrev.y2 }]
+          : []),
+      ],
+    });
+  }
+
+  // FX (no-key API) + prev from cache
+  try {
+    const res = await fetch('https://open.er-api.com/v6/latest/USD', {
+      cache: 'no-store',
+    });
+    const json = (await res.json()) as any;
+    const rates = json?.rates ?? {};
+
+    const addFx = (id: string, name: string, unit: string, value: number) => {
+      const prev = findPrev(id);
+      macro.push({
+        id,
+        name,
+        region: 'FX',
+        value,
+        unit,
+        period: formatDateYYYYMMDDDashed(now),
+        prev_value:
+          prev && Number.isFinite(prev.value) ? (prev.value as number) : undefined,
+        prev_period: prev?.period || undefined,
+        frequency: '日度',
+      });
+    };
+
+    if (typeof rates.CNY === 'number') addFx('USD_CNY', '美元/人民币', 'CNY', rates.CNY);
+    if (typeof rates.JPY === 'number') addFx('USD_JPY', '美元/日元', 'JPY', rates.JPY);
+    if (typeof rates.EUR === 'number' && rates.EUR !== 0) {
+      addFx('EUR_USD', '欧元/美元', 'USD', 1 / rates.EUR);
+    }
+  } catch (err) {
+    console.error('FX fetch failed', err);
+  }
+
+  const tickerMarket = buildTickerMarketFromHistory(market);
+
+  return {
+    source: 'public',
+    reason: opts?.reason,
+    error: opts?.error,
+    market,
+    macro,
+    tickerMarket,
+  };
+};
+
 export const GET = async () => {
   if (!hasTushareToken()) {
-    const summary: EconomySummary = {
-      source: 'demo',
-      reason: 'missing_token',
-      market: DEMO_MARKET,
-      macro: DEMO_MACRO,
-      tickerMarket: DEMO_MARKET,
-    };
+    const summary = await getPublicEconomySummary({ reason: 'missing_token' });
     return Response.json(summary);
   }
 
@@ -725,17 +971,13 @@ export const GET = async () => {
     }
 
     if (!market.length) {
-      // If all Tushare calls failed, fall back completely to demo data.
-      const summary: EconomySummary = {
-        source: 'demo',
+      const summary = await getPublicEconomySummary({
         reason: 'tushare_failed',
-        error: lastTushareError ?? {
-          message: 'Tushare calls failed. Please verify token permissions.',
-        },
-        market: DEMO_MARKET,
-        macro: DEMO_MACRO,
-        tickerMarket: DEMO_MARKET,
-      };
+        error:
+          lastTushareError ?? {
+            message: 'Tushare calls failed. Please verify token permissions.',
+          },
+      });
       return Response.json(summary);
     }
 
@@ -763,11 +1005,10 @@ export const GET = async () => {
     return Response.json(summary);
   } catch (err) {
     console.error('Error in /api/economy/summary:', err);
-    return Response.json({
-      source: 'demo',
-      market: DEMO_MARKET,
-      macro: DEMO_MACRO,
-      tickerMarket: DEMO_MARKET,
+    const summary = await getPublicEconomySummary({
+      reason: 'tushare_failed',
+      error: { message: 'Economy endpoint failed, falling back to public data.' },
     });
+    return Response.json(summary);
   }
 };
