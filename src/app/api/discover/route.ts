@@ -1,6 +1,8 @@
 import { searchSearxng } from '@/lib/searxng';
 import { getSearxngURL } from '@/lib/config/serverRegistry';
 
+export const runtime = 'nodejs';
+
 const websitesForTopic = {
   tech: {
     query: ['technology news', 'latest tech', 'AI', 'science and innovation'],
@@ -69,6 +71,24 @@ type FinanceBlog = {
   url: string;
   content: string;
   thumbnail?: string;
+};
+
+const fetchWithTimeout = async (
+  url: string,
+  init: RequestInit & { timeoutMs?: number } = {},
+) => {
+  const timeoutMs = init.timeoutMs ?? 10_000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    return res;
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 const stripCdata = (value: string) =>
@@ -210,6 +230,68 @@ const parseGenericRss = (xml: string): FinanceBlog[] => {
   return items;
 };
 
+const fetchWallstreetcnArticleNews = async (): Promise<FinanceBlog[]> => {
+  try {
+    const res = await fetchWithTimeout(
+      // NOTE: `limit=40` currently returns `data: ""` (string) from the upstream API.
+      'https://api-one-wscn.awtmt.com/apiv1/content/articles?channel=global-channel&client=pc&limit=30',
+      {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (compatible; FinanceAI/1.0; +https://github.com/leecyno1/finance-ai-llm)',
+          Accept: 'application/json',
+        },
+        cache: 'no-store',
+        timeoutMs: 10_000,
+      },
+    );
+
+    if (!res.ok) {
+      throw new Error(`Wallstreetcn articles HTTP error: ${res.status}`);
+    }
+
+    const data = (await res.json()) as any;
+    const items = Array.isArray(data?.data?.items) ? (data.data.items as any[]) : [];
+
+    const blogs: FinanceBlog[] = items
+      .map((item) => {
+        const id = item?.id;
+        const title = normalizeText(String(item?.title ?? ''));
+        const content = normalizeText(String(item?.content_short ?? ''));
+
+        const image = item?.image?.uri || item?.image_uri;
+        const thumbnail = image ? String(image) : '';
+
+        const isNeedPay = Boolean(
+          item?.is_need_pay ||
+            item?.is_priced ||
+            item?.is_paid ||
+            item?.is_in_vip_privilege,
+        );
+        if (!id || !title || isNeedPay) return null;
+
+        return {
+          title,
+          url: `https://wallstreetcn.com/articles/${id}`,
+          content,
+          thumbnail,
+        } satisfies FinanceBlog;
+      })
+      .filter(Boolean) as FinanceBlog[];
+
+    const seen = new Set<string>();
+    return blogs.filter((b) => {
+      const key = b.url.toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  } catch (error) {
+    console.error('Failed to fetch Wallstreetcn article news:', error);
+    return [];
+  }
+};
+
 const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
   const rssFeeds = [
     'http://rss.sina.com.cn/roll/finance/hot_roll.xml', // 财经要闻汇总
@@ -221,7 +303,7 @@ const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
 
   const results = await Promise.allSettled(
     rssFeeds.map(async (url) => {
-      const res = await fetch(url);
+      const res = await fetchWithTimeout(url, { timeoutMs: 10_000 });
       if (!res.ok) {
         throw new Error(`RSS HTTP error: ${res.status}`);
       }
@@ -273,7 +355,10 @@ const RSS_BY_TOPIC: Record<Topic, string[]> = {
 const fetchBlogsFromRss = async (urls: string[]): Promise<FinanceBlog[]> => {
   const results = await Promise.allSettled(
     urls.map(async (url) => {
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetchWithTimeout(url, {
+        cache: 'no-store',
+        timeoutMs: 10_000,
+      });
       if (!res.ok) {
         throw new Error(`RSS HTTP error: ${res.status}`);
       }
@@ -323,13 +408,25 @@ export const GET = async (req: Request) => {
     const selectedTopic = websitesForTopic[topic];
     const language = topic === 'finance' ? 'zh-CN' : 'en';
 
-    // 财经：优先尝试从新浪 RSS 获取真实新闻
+    // 财经：优先使用华尔街见闻文章源（带封面图），失败再回退到 RSS / 示例
     if (topic === 'finance') {
-      const rssBlogs = await fetchFinanceNewsFromRss();
-      if (rssBlogs.length) {
+      const [wscnBlogs, rssBlogs] = await Promise.all([
+        fetchWallstreetcnArticleNews(),
+        fetchFinanceNewsFromRss(),
+      ]);
+      const merged = [...wscnBlogs, ...rssBlogs];
+      const seen = new Set<string>();
+      const deduped = merged.filter((b) => {
+        const key = b.url.toLowerCase().trim();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      if (deduped.length) {
         return Response.json(
           {
-            blogs: rssBlogs,
+            blogs: deduped.slice(0, 60),
           },
           { status: 200 },
         );
