@@ -157,11 +157,11 @@ const parseGenericRss = (xml: string): FinanceBlog[] => {
 
   const extractAttr = (itemXml: string, tag: string, attr: string) => {
     const regex = new RegExp(
-      `<${tag}[^>]*?\\s${attr}=\"([^\"]+)\"[^>]*?>`,
+      `<${tag}[^>]*?\\s${attr}=(\"([^\"]+)\"|'([^']+)')[^>]*?>`,
       'i',
     );
     const match = itemXml.match(regex);
-    return match?.[1] ?? '';
+    return match?.[2] ?? match?.[3] ?? '';
   };
 
   for (const itemXml of matches) {
@@ -185,7 +185,8 @@ const parseGenericRss = (xml: string): FinanceBlog[] => {
     const mediaContent = extractAttr(itemXml, 'media:content', 'url');
     const mediaThumb = extractAttr(itemXml, 'media:thumbnail', 'url');
 
-    let thumbnail = mediaThumb || mediaContent || enclosure || '';
+    let thumbnail =
+      decodeHtmlEntities(mediaThumb || mediaContent || enclosure || '').trim();
     if (!thumbnail && descriptionDecoded) {
       // Google News and some feeds embed images in the description HTML (sometimes entity-escaped).
       const match = descriptionDecoded.match(

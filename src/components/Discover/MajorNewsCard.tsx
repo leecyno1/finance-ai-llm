@@ -4,7 +4,8 @@ import Link from 'next/link';
 const getThumbnailSrc = (thumbnail: string | undefined) => {
   if (!thumbnail) return '/dr-lemon-logo.svg';
   try {
-    return new URL(thumbnail).toString();
+    const url = new URL(thumbnail).toString();
+    return `/api/image-proxy?url=${encodeURIComponent(url)}`;
   } catch {
     return thumbnail;
   }
