@@ -168,7 +168,9 @@ const parseGenericRss = (xml: string): FinanceBlog[] => {
     const titleRaw = extractTagRaw(itemXml, 'title');
     const linkRaw = extractTagRaw(itemXml, 'link');
     const descriptionRaw =
-      extractTagRaw(itemXml, 'description') || extractTagRaw(itemXml, 'summary');
+      extractTagRaw(itemXml, 'description') ||
+      extractTagRaw(itemXml, 'summary') ||
+      extractTagRaw(itemXml, 'content:encoded');
 
     const title = normalizeText(titleRaw);
     let url = decodeHtmlEntities(linkRaw).trim();
@@ -213,6 +215,8 @@ const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
     'http://rss.sina.com.cn/roll/finance/hot_roll.xml', // 财经要闻汇总
     'http://rss.sina.com.cn/news/allnews/finance.xml', // 财经焦点新闻
     'http://rss.sina.com.cn/roll/stock/hot_roll.xml', // 股票要闻
+    'https://www.chinanews.com.cn/rss/finance.xml', // 中国新闻网-财经
+    'https://www.people.com.cn/rss/finance.xml', // 人民网-财经
   ];
 
   const results = await Promise.allSettled(
@@ -222,16 +226,14 @@ const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
         throw new Error(`RSS HTTP error: ${res.status}`);
       }
       const xml = await res.text();
-      return parseSinaRss(xml);
+      if (url.includes('rss.sina.com.cn')) return parseSinaRss(xml);
+      return parseGenericRss(xml);
     }),
   );
 
   const blogs = results
     .filter((r) => r.status === 'fulfilled')
-    .flatMap(
-      (r) =>
-        (r as PromiseFulfilledResult<ReturnType<typeof parseSinaRss>>).value,
-    );
+    .flatMap((r) => (r as PromiseFulfilledResult<FinanceBlog[]>).value);
 
   const seen = new Set<string>();
   return blogs.filter((b) => {
@@ -244,22 +246,27 @@ const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
 
 const RSS_BY_TOPIC: Record<Topic, string[]> = {
   tech: [
-    'https://news.google.com/rss/search?q=technology%20OR%20AI%20OR%20science&hl=en-US&gl=US&ceid=US:en',
     'https://www.theverge.com/rss/index.xml',
-    'https://feeds.feedburner.com/TechCrunch/',
+    'https://techcrunch.com/feed/',
+    'https://www.wired.com/feed/rss',
   ],
-  finance: [
-    'https://news.google.com/rss/search?q=finance%20OR%20stock%20OR%20macro%20OR%20interest%20rate&hl=en-US&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=%E8%B4%A2%E7%BB%8F%20OR%20%E8%82%A1%E5%B8%82%20OR%20%E5%AE%8F%E8%A7%82%20OR%20%E5%88%A9%E7%8E%87&hl=zh-CN&gl=CN&ceid=CN:zh-Hans',
-  ],
+  finance: [],
   art: [
-    'https://news.google.com/rss/search?q=art%20OR%20culture%20OR%20museum&hl=en-US&gl=US&ceid=US:en',
+    'https://www.artnews.com/c/art-news/news/feed/',
+    'https://hyperallergic.com/feed/',
+    'https://www.artforum.com/feed/',
+    'https://www.artsy.net/rss/news',
   ],
   sports: [
-    'https://news.google.com/rss/search?q=sports%20OR%20football%20OR%20basketball&hl=en-US&gl=US&ceid=US:en',
+    'https://www.espn.com/espn/rss/news',
+    'https://www.skysports.com/rss/12040',
+    'https://www.cbssports.com/rss/headlines/',
   ],
   entertainment: [
-    'https://news.google.com/rss/search?q=entertainment%20OR%20movies%20OR%20tv&hl=en-US&gl=US&ceid=US:en',
+    'https://variety.com/feed/',
+    'https://www.hollywoodreporter.com/feed/',
+    'https://www.tmz.com/rss.xml',
+    'https://www.rollingstone.com/feed/',
   ],
 };
 
@@ -331,6 +338,17 @@ export const GET = async (req: Request) => {
       return Response.json(
         {
           blogs: DEMO_FINANCE_BLOGS,
+        },
+        { status: 200 },
+      );
+    }
+
+    // 其它主题：优先使用固定 RSS 源（更稳定且更容易带图），失败再退回 SearXNG
+    const rssFirstBlogs = await fetchBlogsFromRss(RSS_BY_TOPIC[topic] ?? []);
+    if (rssFirstBlogs.length) {
+      return Response.json(
+        {
+          blogs: rssFirstBlogs.map(toDiscoverItem),
         },
         { status: 200 },
       );
