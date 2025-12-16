@@ -26,7 +26,6 @@ type MacroItem = {
 type SummaryResponse = {
   source: string;
   market: MarketItem[];
-  tickerMarket?: MarketItem[];
   macro: MacroItem[];
 };
 
@@ -61,11 +60,9 @@ const EconomyTicker = () => {
         }
         const data = (await res.json()) as SummaryResponse;
 
-        const sourceMarket = (data as any).tickerMarket ?? data.market ?? [];
+        const sourceMarket = data.market ?? [];
 
         const marketItems: TickerItem[] = sourceMarket.map((m: any) => {
-          const prevClose =
-            typeof m.prev_close === 'number' ? m.prev_close : undefined;
           const unit = m.unit || '点';
           const frequency = m.frequency || '日度';
 
@@ -77,7 +74,6 @@ const EconomyTicker = () => {
             )}%)`,
             change: m.pct_chg,
             kind: 'market',
-            prevLabel: prevClose !== undefined ? prevClose.toFixed(2) : undefined,
             unit,
             frequency,
           };
@@ -198,11 +194,11 @@ const EconomyTicker = () => {
                     </div>
                     {(item.prevLabel || item.unit || item.frequency) && (
                       <div className="mt-0.5 text-[10px] text-black/50 dark:text-white/50 truncate">
-                        {item.kind === 'market'
-                          ? `上期 ${
-                              item.prevLabel ?? '-'
-                            }${item.unit ?? ''} · ${item.frequency ?? ''}`
-                          : `${item.frequency ?? ''} · 单位：${item.unit ?? ''}`}
+                        {item.kind === 'market' && item.prevLabel
+                          ? `上期 ${item.prevLabel}${item.unit ?? ''} · ${item.frequency ?? ''}`
+                          : item.kind === 'market'
+                            ? `${item.frequency ?? ''} · 单位：${item.unit ?? ''}`
+                            : `${item.frequency ?? ''} · 单位：${item.unit ?? ''}`}
                       </div>
                     )}
                   </div>

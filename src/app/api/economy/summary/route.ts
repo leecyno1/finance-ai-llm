@@ -4,6 +4,12 @@ import { callTushare, hasTushareToken, TushareApiError } from '@/lib/economy/tus
 import {
   fetchStooqDaily,
   fetchTencentKlineDaily,
+  fetchErApiUsdLatest,
+  fetchFredLatest,
+  fetchLprLatest,
+  fetchNbsLatest,
+  fetchShiborLatest,
+  fetchChinaBond10yLatest,
   fetchTreasuryYieldCurveLatest,
 } from '@/lib/economy/public';
 
@@ -473,6 +479,192 @@ const getPublicEconomySummary = async (opts?: {
 
   const macro: (MacroItem & { history?: MacroHistoryPoint[] })[] = [];
 
+  // China macro (NBS)
+  const nbs = await Promise.allSettled([
+    fetchNbsLatest({ dbcode: 'hgyd', cn: 'A01', zb: 'A01010G01' }), // CPI YoY index (2021-)
+    fetchNbsLatest({ dbcode: 'hgyd', cn: 'A01', zb: 'A01080101' }), // PPI YoY index
+    fetchNbsLatest({ dbcode: 'hgyd', cn: 'A0B', zb: 'A0B0101' }), // PMI manufacturing
+    fetchNbsLatest({ dbcode: 'hgyd', cn: 'A0B', zb: 'A0B0201' }), // PMI non-manufacturing
+    fetchNbsLatest({ dbcode: 'hgyd', cn: 'A0B', zb: 'A0B0301' }), // PMI composite
+    fetchNbsLatest({ dbcode: 'hgyd', cn: 'A0D', zb: 'A0D0102' }), // M2 YoY
+    fetchNbsLatest({ dbcode: 'hgjd', cn: 'A01', zb: 'A0103' }), // GDP index (YoY, base=100)
+  ]);
+
+  const pick = <T>(r: PromiseSettledResult<T>): T | null =>
+    r.status === 'fulfilled' ? (r.value as any) : null;
+
+  const cpiIndex = pick(nbs[0]);
+  if (cpiIndex && typeof cpiIndex.value === 'number') {
+    macro.push({
+      id: 'CN_CPI_YOY',
+      name: '中国CPI同比',
+      region: 'CN',
+      value: cpiIndex.value - 100,
+      unit: '%',
+      period: cpiIndex.period,
+      prev_value:
+        typeof cpiIndex.prev_value === 'number' ? cpiIndex.prev_value - 100 : undefined,
+      prev_period: cpiIndex.prev_period,
+      frequency: '月度',
+    });
+  }
+
+  const ppiIndex = pick(nbs[1]);
+  if (ppiIndex && typeof ppiIndex.value === 'number') {
+    macro.push({
+      id: 'CN_PPI_YOY',
+      name: '中国PPI同比',
+      region: 'CN',
+      value: ppiIndex.value - 100,
+      unit: '%',
+      period: ppiIndex.period,
+      prev_value:
+        typeof ppiIndex.prev_value === 'number' ? ppiIndex.prev_value - 100 : undefined,
+      prev_period: ppiIndex.prev_period,
+      frequency: '月度',
+    });
+  }
+
+  const pmiMfg = pick(nbs[2]);
+  if (pmiMfg && typeof pmiMfg.value === 'number') {
+    macro.push({
+      id: 'CN_PMI_MFG',
+      name: '中国PMI(制造业)',
+      region: 'CN',
+      value: pmiMfg.value,
+      unit: '',
+      period: pmiMfg.period,
+      prev_value: pmiMfg.prev_value,
+      prev_period: pmiMfg.prev_period,
+      frequency: '月度',
+    });
+  }
+  const pmiNon = pick(nbs[3]);
+  if (pmiNon && typeof pmiNon.value === 'number') {
+    macro.push({
+      id: 'CN_PMI_NM',
+      name: '中国PMI(非制造业)',
+      region: 'CN',
+      value: pmiNon.value,
+      unit: '',
+      period: pmiNon.period,
+      prev_value: pmiNon.prev_value,
+      prev_period: pmiNon.prev_period,
+      frequency: '月度',
+    });
+  }
+  const pmiComp = pick(nbs[4]);
+  if (pmiComp && typeof pmiComp.value === 'number') {
+    macro.push({
+      id: 'CN_PMI_COMP',
+      name: '中国PMI(综合产出)',
+      region: 'CN',
+      value: pmiComp.value,
+      unit: '',
+      period: pmiComp.period,
+      prev_value: pmiComp.prev_value,
+      prev_period: pmiComp.prev_period,
+      frequency: '月度',
+    });
+  }
+
+  const m2 = pick(nbs[5]);
+  if (m2 && typeof m2.value === 'number') {
+    macro.push({
+      id: 'CN_M2_YOY',
+      name: '中国M2同比',
+      region: 'CN',
+      value: m2.value,
+      unit: '%',
+      period: m2.period,
+      prev_value: m2.prev_value,
+      prev_period: m2.prev_period,
+      frequency: '月度',
+    });
+  }
+
+  const gdpIdx = pick(nbs[6]);
+  if (gdpIdx && typeof gdpIdx.value === 'number') {
+    macro.push({
+      id: 'CN_GDP_YOY',
+      name: '中国GDP同比',
+      region: 'CN',
+      value: gdpIdx.value - 100,
+      unit: '%',
+      period: gdpIdx.period,
+      prev_value:
+        typeof gdpIdx.prev_value === 'number' ? gdpIdx.prev_value - 100 : undefined,
+      prev_period: gdpIdx.prev_period,
+      frequency: '季度',
+    });
+  }
+
+  // China rates (SHIBOR / LPR / 10Y)
+  try {
+    const shibor = await fetchShiborLatest();
+    if (shibor?.records?.length) {
+      const period = shibor.showDateCN?.split(' ')?.[0] || formatDateYYYYMMDDDashed(now);
+      for (const r of shibor.records) {
+        if (!['O/N', '1W', '2W', '1M', '3M', '6M', '9M', '1Y'].includes(r.term)) continue;
+        const prevValue =
+          typeof r.deltaBp === 'number' ? r.value - r.deltaBp / 100 : undefined;
+        macro.push({
+          id: `CN_SHIBOR_${r.term.replace('/', '')}`,
+          name: `SHIBOR ${r.term}`,
+          region: 'CN',
+          value: r.value,
+          unit: '%',
+          period,
+          prev_value: prevValue,
+          prev_period: period,
+          frequency: '日度',
+        });
+      }
+    }
+  } catch (err) {
+    console.error('SHIBOR fetch failed', err);
+  }
+
+  try {
+    const lpr = await fetchLprLatest();
+    if (lpr?.records?.length) {
+      const period = lpr.showDateCN || formatDateYYYYMMDDDashed(now);
+      for (const r of lpr.records) {
+        if (!['1Y', '5Y'].includes(r.term)) continue;
+        macro.push({
+          id: `CN_LPR_${r.term}`,
+          name: `LPR ${r.term}`,
+          region: 'CN',
+          value: r.value,
+          unit: '%',
+          period,
+          frequency: '月度',
+        });
+      }
+    }
+  } catch (err) {
+    console.error('LPR fetch failed', err);
+  }
+
+  try {
+    const cn10 = await fetchChinaBond10yLatest();
+    if (cn10 && typeof cn10.value === 'number') {
+      macro.push({
+        id: 'CN_10Y_YIELD',
+        name: '中国10年国债收益率',
+        region: 'CN',
+        value: cn10.value,
+        unit: '%',
+        period: cn10.period,
+        prev_value: cn10.prev_value,
+        prev_period: cn10.prev_period,
+        frequency: '日度',
+      });
+    }
+  } catch (err) {
+    console.error('ChinaBond 10Y fetch failed', err);
+  }
+
   if (ycLatest?.y10 !== undefined) {
     macro.push({
       id: 'US_10Y_YIELD',
@@ -512,14 +704,58 @@ const getPublicEconomySummary = async (opts?: {
     });
   }
 
+  // US money market rates (FRED)
+  try {
+    const rrp = await fetchFredLatest('RRPONTSYD');
+    if (rrp && typeof rrp.value === 'number') {
+      macro.push({
+        id: 'US_RRP',
+        name: '美联储隔夜逆回购(ON RRP)',
+        region: 'US',
+        value: rrp.value,
+        unit: '%',
+        period: rrp.period,
+        prev_value: rrp.prev_value,
+        prev_period: rrp.prev_period,
+        frequency: '日度',
+      });
+    }
+    const sofr = await fetchFredLatest('SOFR');
+    if (sofr && typeof sofr.value === 'number') {
+      macro.push({
+        id: 'US_SOFR',
+        name: 'SOFR',
+        region: 'US',
+        value: sofr.value,
+        unit: '%',
+        period: sofr.period,
+        prev_value: sofr.prev_value,
+        prev_period: sofr.prev_period,
+        frequency: '日度',
+      });
+    }
+    const liborProxy = await fetchFredLatest('IR3TIB01USM156N');
+    if (liborProxy && typeof liborProxy.value === 'number') {
+      macro.push({
+        id: 'US_LIBOR_PROXY',
+        name: '美元3个月拆借利率(替代LIBOR)',
+        region: 'US',
+        value: liborProxy.value,
+        unit: '%',
+        period: liborProxy.period,
+        prev_value: liborProxy.prev_value,
+        prev_period: liborProxy.prev_period,
+        frequency: '月度',
+      });
+    }
+  } catch (err) {
+    console.error('FRED rates fetch failed', err);
+  }
+
   // FX (no-key API) + prev from cache
   try {
-    const res = await fetch('https://open.er-api.com/v6/latest/USD', {
-      cache: 'no-store',
-    });
-    const json = (await res.json()) as any;
-    const rates = json?.rates ?? {};
-
+    const rates = await fetchErApiUsdLatest();
+    if (!rates) throw new Error('No FX rates');
     const addFx = (id: string, name: string, unit: string, value: number) => {
       const prev = findPrev(id);
       macro.push({
@@ -545,7 +781,8 @@ const getPublicEconomySummary = async (opts?: {
     console.error('FX fetch failed', err);
   }
 
-  const tickerMarket = buildTickerMarketFromHistory(market);
+  // Daily ticker should only show latest snapshot; leave list-building to the client.
+  const tickerMarket: MarketItem[] = market.map(({ history, ...rest }) => rest);
 
   return {
     source: 'public',
