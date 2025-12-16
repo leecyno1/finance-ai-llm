@@ -26,6 +26,11 @@ type MacroItem = {
 
 type SummaryResponse = {
   source: string;
+  reason?: 'missing_token' | 'tushare_failed';
+  error?: {
+    code?: number;
+    message: string;
+  };
   market: MarketItem[];
   macro: MacroItem[];
 };
@@ -55,6 +60,31 @@ const EconomyPage = () => {
       <p className="text-xs text-black/50 dark:text-white/50 mb-4">
         实时财经数据与资讯 · 多源聚合
       </p>
+
+      {data?.source === 'demo' && (
+        <div className="mb-4 rounded-2xl border border-amber-300/40 bg-amber-200/20 dark:border-amber-400/30 dark:bg-amber-400/10 px-4 py-3 text-xs text-black/70 dark:text-white/70">
+          {data.reason === 'missing_token' ? (
+            <div>
+              当前为示例数据：未配置 TuShare Token。请在任意输入框输入{' '}
+              <span className="font-semibold">8899174</span> 回车显示设置按钮，
+              然后在 <span className="font-semibold">Settings → Economy</span>{' '}
+              中粘贴并保存 TuShare Token。
+            </div>
+          ) : (
+            <div>
+              当前为示例数据：TuShare 拉取失败（请检查 token 权限/余额/是否包含多余空格）。
+              {data.error?.code !== undefined && (
+                <span className="ml-2">错误码：{data.error.code}</span>
+              )}
+              {data.error?.message && (
+                <div className="mt-1 text-black/60 dark:text-white/60">
+                  {data.error.message}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid md:grid-cols-[2fr,1fr] gap-4 mb-6">
         <div className="space-y-3">

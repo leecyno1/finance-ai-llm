@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'node:path';
-import { callTushare, hasTushareToken } from '@/lib/economy/tushare';
+import { callTushare, hasTushareToken, TushareApiError } from '@/lib/economy/tushare';
 
 type MarketHistoryPoint = {
   trade_date: string;
@@ -39,6 +39,11 @@ type MacroItem = {
 
 type EconomySummary = {
   source: string;
+  reason?: 'missing_token' | 'tushare_failed';
+  error?: {
+    code?: number;
+    message: string;
+  };
   market: (MarketItem & { history?: MarketHistoryPoint[] })[];
   macro: (MacroItem & { history?: MacroHistoryPoint[] })[];
   // 为首页滚动条准备的展开后的市场数据列表（至少 100 条）
@@ -304,6 +309,7 @@ export const GET = async () => {
   if (!hasTushareToken()) {
     const summary: EconomySummary = {
       source: 'demo',
+      reason: 'missing_token',
       market: DEMO_MARKET,
       macro: DEMO_MACRO,
       tickerMarket: DEMO_MARKET,
@@ -356,6 +362,8 @@ export const GET = async () => {
     const startDate = getLastMonthStartDate();
 
     // 市场数据：若缓存过期，则从 TuShare 拉取最新（并带最近一个月历史）
+    let lastTushareError: { code?: number; message: string } | undefined;
+
     if (!marketFresh || FORCE_REFRESH || !market.length) {
       market = [];
 
@@ -398,6 +406,13 @@ export const GET = async () => {
             history,
           });
         } catch (err) {
+          if (err instanceof TushareApiError) {
+            lastTushareError = { code: err.code, message: err.msg };
+          } else if (err instanceof Error) {
+            lastTushareError = { message: err.message };
+          } else {
+            lastTushareError = { message: 'Unknown error' };
+          }
           console.error(
             'Failed to fetch index data from Tushare',
             series.id,
@@ -713,6 +728,10 @@ export const GET = async () => {
       // If all Tushare calls failed, fall back completely to demo data.
       const summary: EconomySummary = {
         source: 'demo',
+        reason: 'tushare_failed',
+        error: lastTushareError ?? {
+          message: 'Tushare calls failed. Please verify token permissions.',
+        },
         market: DEMO_MARKET,
         macro: DEMO_MACRO,
         tickerMarket: DEMO_MARKET,

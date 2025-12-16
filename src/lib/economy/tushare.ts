@@ -13,6 +13,18 @@ type TushareResponse = {
 
 const TUSHARE_ENDPOINT = 'https://api.tushare.pro';
 
+export class TushareApiError extends Error {
+  code: number;
+  msg: string;
+
+  constructor(code: number, msg: string) {
+    super(`Tushare error (${code}): ${msg || 'unknown error'}`);
+    this.name = 'TushareApiError';
+    this.code = code;
+    this.msg = msg || 'unknown error';
+  }
+}
+
 export const hasTushareToken = () => !!getTushareToken();
 
 export const callTushare = async (
@@ -20,7 +32,7 @@ export const callTushare = async (
   params: Record<string, any>,
   fields: string[],
 ): Promise<TushareRow[]> => {
-  const token = getTushareToken();
+  const token = getTushareToken().trim();
   if (!token) {
     throw new Error('Tushare token not configured');
   }
@@ -53,7 +65,7 @@ export const callTushare = async (
 
   const json = (await res.json()) as TushareResponse;
   if (json.code !== 0 || !json.data) {
-    throw new Error(`Tushare error: ${json.msg || 'unknown error'}`);
+    throw new TushareApiError(json.code, json.msg);
   }
 
   const { fields: returnedFields, items } = json.data;
