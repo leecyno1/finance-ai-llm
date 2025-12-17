@@ -19,24 +19,24 @@ const websitesForTopic = {
       '经济数据',
     ],
     links: [
-      'wallstreetcn.com', // 华尔街见闻
-      'cls.cn', // 财联社
+      // Discover 财经主要走 RSS 聚合（新浪/中新网/人民网）
+      // 这里保留 searxng 搜索兜底的域名（如未配置 SearXNG，则不会走到这里）
       'finance.sina.com.cn', // 新浪财经
-      'business.sohu.com', // 搜狐财经
+      'chinanews.com.cn', // 中新网
       'people.com.cn', // 人民网
     ],
   },
   art: {
     query: ['art news', 'culture', 'modern art', 'cultural events'],
-    links: ['artnews.com', 'hyperallergic.com', 'theartnewspaper.com'],
+    links: ['artnews.com', 'hyperallergic.com', 'artforum.com', 'artsy.net'],
   },
   sports: {
     query: ['sports news', 'latest sports', 'cricket football tennis'],
-    links: ['espn.com', 'bbc.com/sport', 'skysports.com'],
+    links: ['espn.com', 'skysports.com', 'cbssports.com'],
   },
   entertainment: {
     query: ['entertainment news', 'movies', 'TV shows', 'celebrities'],
-    links: ['hollywoodreporter.com', 'variety.com', 'deadline.com'],
+    links: ['variety.com', 'hollywoodreporter.com', 'tmz.com', 'rollingstone.com'],
   },
 };
 
@@ -51,17 +51,17 @@ const DEMO_FINANCE_BLOGS = [
     thumbnail: '',
   },
   {
-    title: '示例：美股三大指数震荡，科技股波动加剧',
-    url: 'https://www.wsj.com',
+    title: '示例：宏观数据与利率预期变化，扰动全球市场',
+    url: 'https://www.chinanews.com.cn/rss/finance.xml',
     content:
-      '示例数据：宏观政策与利率预期变化，对全球股市造成一定扰动。',
+      '示例数据：用于在新闻源不可用时兜底展示，实际数据将来自新浪/中新网/人民网的 RSS 聚合。',
     thumbnail: '',
   },
   {
-    title: '示例：恒生指数全天走强，南向资金净流入',
-    url: 'https://www.wallstreetcn.com',
+    title: '示例：政策与产业动态影响市场情绪，关注后续演进',
+    url: 'https://www.people.com.cn/rss/finance.xml',
     content:
-      '示例数据：港股科技与医药板块表现活跃，成交放量明显回升。',
+      '示例数据：用于在新闻源不可用时兜底展示。',
     thumbnail: '',
   },
 ];
@@ -89,6 +89,23 @@ const fetchWithTimeout = async (
   } finally {
     clearTimeout(timeout);
   }
+};
+
+const resolveUrl = (raw: string, baseUrl?: string) => {
+  const value = (raw || '').trim();
+  if (!value) return '';
+  if (value.startsWith('http://') || value.startsWith('https://')) return value;
+  if (value.startsWith('//')) return `https:${value}`;
+
+  if (baseUrl) {
+    try {
+      return new URL(value, baseUrl).toString();
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
 };
 
 const stripCdata = (value: string) =>
@@ -132,7 +149,14 @@ const normalizeText = (value: string) => {
   return stripTags(decoded);
 };
 
-const parseSinaRss = (xml: string): FinanceBlog[] => {
+const withOgFallbackThumbnail = (blog: FinanceBlog): FinanceBlog => {
+  const hasThumbnail = (blog.thumbnail || '').trim().length > 0;
+  const url = (blog.url || '').trim();
+  if (hasThumbnail || !url.startsWith('http')) return blog;
+  return { ...blog, thumbnail: `/api/og-image?url=${encodeURIComponent(url)}` };
+};
+
+const parseSinaRss = (xml: string, feedUrl?: string): FinanceBlog[] => {
   const items: FinanceBlog[] = [];
 
   const itemRegex = /<item[\s\S]*?<\/item>/g;
@@ -147,8 +171,21 @@ const parseSinaRss = (xml: string): FinanceBlog[] => {
 
   for (const itemXml of matches) {
     const title = normalizeText(extractTag(itemXml, 'title'));
-    const url = decodeHtmlEntities(extractTag(itemXml, 'link')).trim();
-    const description = normalizeText(extractTag(itemXml, 'description'));
+    const url = resolveUrl(
+      decodeHtmlEntities(extractTag(itemXml, 'link')).trim(),
+      feedUrl,
+    );
+    const descriptionRaw = extractTag(itemXml, 'description');
+    const descriptionDecoded = decodeHtmlEntities(stripCdata(descriptionRaw));
+    const description = stripTags(descriptionDecoded);
+
+    let thumbnail = '';
+    if (descriptionDecoded) {
+      const match = descriptionDecoded.match(
+        /<img[^>]*\ssrc=["']([^"']+)["']/i,
+      );
+      if (match?.[1]) thumbnail = resolveUrl(match[1], url || feedUrl);
+    }
 
     if (!title || !url) continue;
 
@@ -156,14 +193,14 @@ const parseSinaRss = (xml: string): FinanceBlog[] => {
       title,
       url,
       content: description,
-      thumbnail: '',
+      thumbnail,
     });
   }
 
   return items;
 };
 
-const parseGenericRss = (xml: string): FinanceBlog[] => {
+const parseGenericRss = (xml: string, feedUrl?: string): FinanceBlog[] => {
   const items: FinanceBlog[] = [];
   const itemRegex = /<item[\s\S]*?<\/item>/g;
   const matches = xml.match(itemRegex) || [];
@@ -193,13 +230,16 @@ const parseGenericRss = (xml: string): FinanceBlog[] => {
       extractTagRaw(itemXml, 'content:encoded');
 
     const title = normalizeText(titleRaw);
-    let url = decodeHtmlEntities(linkRaw).trim();
+    let url = resolveUrl(decodeHtmlEntities(linkRaw).trim(), feedUrl);
     const descriptionDecoded = decodeHtmlEntities(stripCdata(descriptionRaw));
     const description = stripTags(descriptionDecoded);
 
     // some RSS uses <guid isPermaLink="true"> as link
     if (!url) {
-      const guid = decodeHtmlEntities(extractTagRaw(itemXml, 'guid')).trim();
+      const guid = resolveUrl(
+        decodeHtmlEntities(extractTagRaw(itemXml, 'guid')).trim(),
+        feedUrl,
+      );
       if (guid.startsWith('http')) url = guid;
     }
 
@@ -209,12 +249,13 @@ const parseGenericRss = (xml: string): FinanceBlog[] => {
 
     let thumbnail =
       decodeHtmlEntities(mediaThumb || mediaContent || enclosure || '').trim();
+    thumbnail = resolveUrl(thumbnail, url || feedUrl);
     if (!thumbnail && descriptionDecoded) {
       // Google News and some feeds embed images in the description HTML (sometimes entity-escaped).
       const match = descriptionDecoded.match(
         /<img[^>]*\ssrc=["']([^"']+)["']/i,
       );
-      if (match?.[1]) thumbnail = match[1];
+      if (match?.[1]) thumbnail = resolveUrl(match[1], url || feedUrl);
     }
 
     if (!title || !url) continue;
@@ -228,68 +269,6 @@ const parseGenericRss = (xml: string): FinanceBlog[] => {
   }
 
   return items;
-};
-
-const fetchWallstreetcnArticleNews = async (): Promise<FinanceBlog[]> => {
-  try {
-    const res = await fetchWithTimeout(
-      // NOTE: `limit=40` currently returns `data: ""` (string) from the upstream API.
-      'https://api-one-wscn.awtmt.com/apiv1/content/articles?channel=global-channel&client=pc&limit=30',
-      {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (compatible; FinanceAI/1.0; +https://github.com/leecyno1/finance-ai-llm)',
-          Accept: 'application/json',
-        },
-        cache: 'no-store',
-        timeoutMs: 10_000,
-      },
-    );
-
-    if (!res.ok) {
-      throw new Error(`Wallstreetcn articles HTTP error: ${res.status}`);
-    }
-
-    const data = (await res.json()) as any;
-    const items = Array.isArray(data?.data?.items) ? (data.data.items as any[]) : [];
-
-    const blogs: FinanceBlog[] = items
-      .map((item) => {
-        const id = item?.id;
-        const title = normalizeText(String(item?.title ?? ''));
-        const content = normalizeText(String(item?.content_short ?? ''));
-
-        const image = item?.image?.uri || item?.image_uri;
-        const thumbnail = image ? String(image) : '';
-
-        const isNeedPay = Boolean(
-          item?.is_need_pay ||
-            item?.is_priced ||
-            item?.is_paid ||
-            item?.is_in_vip_privilege,
-        );
-        if (!id || !title || isNeedPay) return null;
-
-        return {
-          title,
-          url: `https://wallstreetcn.com/articles/${id}`,
-          content,
-          thumbnail,
-        } satisfies FinanceBlog;
-      })
-      .filter(Boolean) as FinanceBlog[];
-
-    const seen = new Set<string>();
-    return blogs.filter((b) => {
-      const key = b.url.toLowerCase().trim();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  } catch (error) {
-    console.error('Failed to fetch Wallstreetcn article news:', error);
-    return [];
-  }
 };
 
 const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
@@ -308,8 +287,8 @@ const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
         throw new Error(`RSS HTTP error: ${res.status}`);
       }
       const xml = await res.text();
-      if (url.includes('rss.sina.com.cn')) return parseSinaRss(xml);
-      return parseGenericRss(xml);
+      if (url.includes('rss.sina.com.cn')) return parseSinaRss(xml, url);
+      return parseGenericRss(xml, url);
     }),
   );
 
@@ -318,12 +297,14 @@ const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
     .flatMap((r) => (r as PromiseFulfilledResult<FinanceBlog[]>).value);
 
   const seen = new Set<string>();
-  return blogs.filter((b) => {
-    const key = b.url.toLowerCase().trim();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return blogs
+    .filter((b) => {
+      const key = b.url.toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map(withOgFallbackThumbnail);
 };
 
 const RSS_BY_TOPIC: Record<Topic, string[]> = {
@@ -363,7 +344,7 @@ const fetchBlogsFromRss = async (urls: string[]): Promise<FinanceBlog[]> => {
         throw new Error(`RSS HTTP error: ${res.status}`);
       }
       const xml = await res.text();
-      return parseGenericRss(xml);
+      return parseGenericRss(xml, url);
     }),
   );
 
@@ -375,12 +356,14 @@ const fetchBlogsFromRss = async (urls: string[]): Promise<FinanceBlog[]> => {
     );
 
   const seen = new Set<string>();
-  return blogs.filter((b) => {
-    const key = b.url.toLowerCase().trim();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return blogs
+    .filter((b) => {
+      const key = b.url.toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map(withOgFallbackThumbnail);
 };
 
 const toDiscoverItem = (item: any): FinanceBlog => ({
@@ -410,11 +393,8 @@ export const GET = async (req: Request) => {
 
     // 财经：优先使用华尔街见闻文章源（带封面图），失败再回退到 RSS / 示例
     if (topic === 'finance') {
-      const [wscnBlogs, rssBlogs] = await Promise.all([
-        fetchWallstreetcnArticleNews(),
-        fetchFinanceNewsFromRss(),
-      ]);
-      const merged = [...wscnBlogs, ...rssBlogs];
+      const rssBlogs = await fetchFinanceNewsFromRss();
+      const merged = [...rssBlogs];
       const seen = new Set<string>();
       const deduped = merged.filter((b) => {
         const key = b.url.toLowerCase().trim();
@@ -434,7 +414,7 @@ export const GET = async (req: Request) => {
       // RSS 失败时至少返回示例数据，保证前端有内容
       return Response.json(
         {
-          blogs: DEMO_FINANCE_BLOGS,
+          blogs: DEMO_FINANCE_BLOGS.map(withOgFallbackThumbnail),
         },
         { status: 200 },
       );
@@ -445,7 +425,7 @@ export const GET = async (req: Request) => {
     if (rssFirstBlogs.length) {
       return Response.json(
         {
-          blogs: rssFirstBlogs.map(toDiscoverItem),
+          blogs: rssFirstBlogs.map(toDiscoverItem).map(withOgFallbackThumbnail),
         },
         { status: 200 },
       );
@@ -459,7 +439,7 @@ export const GET = async (req: Request) => {
       const rssBlogs = await fetchBlogsFromRss(RSS_BY_TOPIC[topic] ?? []);
       return Response.json(
         {
-          blogs: rssBlogs.map(toDiscoverItem),
+          blogs: rssBlogs.map(toDiscoverItem).map(withOgFallbackThumbnail),
         },
         { status: 200 },
       );
@@ -509,7 +489,7 @@ export const GET = async (req: Request) => {
       const rssBlogs = await fetchBlogsFromRss(RSS_BY_TOPIC[topic] ?? []);
       return Response.json(
         {
-          blogs: rssBlogs.map(toDiscoverItem),
+          blogs: rssBlogs.map(toDiscoverItem).map(withOgFallbackThumbnail),
         },
         { status: 200 },
       );
@@ -517,7 +497,7 @@ export const GET = async (req: Request) => {
 
     return Response.json(
       {
-        blogs: (data as any[]).map(toDiscoverItem),
+        blogs: (data as any[]).map(toDiscoverItem).map(withOgFallbackThumbnail),
       },
       {
         status: 200,
