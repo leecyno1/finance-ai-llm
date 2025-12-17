@@ -304,7 +304,8 @@ export const GET = async (req: NextRequest) => {
     return Response.json({ message: 'Missing url' }, { status: 400 });
   }
 
-  const requestBase = new URL(req.url);
+  const redirect = (location: string) =>
+    new Response(null, { status: 307, headers: { Location: location } });
 
   let pageUrl: URL;
   try {
@@ -319,14 +320,8 @@ export const GET = async (req: NextRequest) => {
   const cacheKey = pageUrl.toString();
   const cached = getFromCache(cacheKey);
   if (cached) {
-    const target =
-      cached === '__none__'
-        ? new URL('/dr-lemon-logo.svg', requestBase)
-        : new URL(
-            `/api/image-proxy?url=${encodeURIComponent(cached)}`,
-            requestBase,
-          );
-    return Response.redirect(target, 307);
+    if (cached === '__none__') return redirect('/dr-lemon-logo.svg');
+    return redirect(`/api/image-proxy?url=${encodeURIComponent(cached)}`);
   }
 
   try {
@@ -354,7 +349,7 @@ export const GET = async (req: NextRequest) => {
     const headHtml = await fetchHtmlChunk();
     if (!headHtml) {
       setCache(cacheKey, '__none__', OG_NEGATIVE_CACHE_TTL_MS);
-      return Response.redirect(new URL('/dr-lemon-logo.svg', requestBase), 307);
+      return redirect('/dr-lemon-logo.svg');
     }
 
     let found =
@@ -375,23 +370,17 @@ export const GET = async (req: NextRequest) => {
 
     if (!found) {
       setCache(cacheKey, '__none__', OG_NEGATIVE_CACHE_TTL_MS);
-      return Response.redirect(new URL('/dr-lemon-logo.svg', requestBase), 307);
+      return redirect('/dr-lemon-logo.svg');
     }
 
     const resolved = new URL(found, pageUrl).toString();
     setCache(cacheKey, resolved);
-    return Response.redirect(
-      new URL(
-        `/api/image-proxy?url=${encodeURIComponent(resolved)}`,
-        requestBase,
-      ),
-      307,
-    );
+    return redirect(`/api/image-proxy?url=${encodeURIComponent(resolved)}`);
   } catch (err: any) {
     setCache(cacheKey, '__none__', OG_NEGATIVE_CACHE_TTL_MS);
     if (err?.name === 'AbortError') {
-      return Response.redirect(new URL('/dr-lemon-logo.svg', requestBase), 307);
+      return redirect('/dr-lemon-logo.svg');
     }
-    return Response.redirect(new URL('/dr-lemon-logo.svg', requestBase), 307);
+    return redirect('/dr-lemon-logo.svg');
   }
 };
