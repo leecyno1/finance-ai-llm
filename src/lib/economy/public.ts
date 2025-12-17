@@ -8,6 +8,11 @@ type CboeDailyRow = {
   close: number;
 };
 
+type WorldBankObs = {
+  date: string; // YYYY
+  value: number;
+};
+
 type TencentDailyRow = {
   date: string; // YYYY-MM-DD
   close: number;
@@ -93,6 +98,43 @@ export const fetchCboeVixDaily = async (opts?: {
       rows.push({ date, close });
     }
     return rows;
+  }, 12_000);
+};
+
+export const fetchWorldBankIndicatorLatest = async (
+  country: string, // e.g. USA, CHN, WLD
+  indicator: string, // e.g. NY.GDP.MKTP.CD
+): Promise<{ latest?: WorldBankObs; prev?: WorldBankObs }> => {
+  const url = new URL(
+    `https://api.worldbank.org/v2/country/${encodeURIComponent(country)}/indicator/${encodeURIComponent(indicator)}`,
+  );
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('per_page', '80');
+
+  return withTimeout(async (signal) => {
+    const res = await fetch(url, { cache: 'no-store', signal });
+    if (!res.ok) throw new Error(`WorldBank HTTP error: ${res.status}`);
+    const json = (await res.json()) as any;
+    const data = Array.isArray(json) ? json[1] : null;
+    if (!Array.isArray(data)) return {};
+
+    const rows: WorldBankObs[] = data
+      .map((row: any) => ({
+        date: String(row?.date ?? ''),
+        value: typeof row?.value === 'number' ? (row.value as number) : Number.NaN,
+      }))
+      .filter((row: WorldBankObs) => {
+        const year = Number(row.date);
+        return (
+          Number.isFinite(year) &&
+          year > 1900 &&
+          Number.isFinite(row.value)
+        );
+      })
+      .sort((a, b) => Number(b.date) - Number(a.date));
+
+    if (!rows.length) return {};
+    return { latest: rows[0], prev: rows[1] };
   }, 12_000);
 };
 

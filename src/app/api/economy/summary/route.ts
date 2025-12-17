@@ -5,6 +5,7 @@ import {
   fetchStooqDaily,
   fetchTencentKlineDaily,
   fetchCboeVixDaily,
+  fetchWorldBankIndicatorLatest,
   fetchErApiUsdLatest,
   fetchFredLatest,
   fetchLprLatest,
@@ -368,6 +369,437 @@ const buildTickerMarketFromHistory = (
     );
   }
   return nextTickerMarket;
+};
+
+type WorldBankIndicatorConfig = {
+  id: string;
+  name: string;
+  region: string;
+  country: string;
+  indicator: string;
+  unit: string;
+  frequency: string;
+  scale?: number;
+};
+
+const fetchWorldBankMacroItems = async (): Promise<
+  (MacroItem & { history?: MacroHistoryPoint[] })[]
+> => {
+  const configs: WorldBankIndicatorConfig[] = [
+    // US
+    {
+      id: 'WB_US_GDP_CURRENT',
+      name: '美国GDP(现价)',
+      region: 'US',
+      country: 'USA',
+      indicator: 'NY.GDP.MKTP.CD',
+      unit: '万亿美元',
+      frequency: '年度',
+      scale: 1e12,
+    },
+    {
+      id: 'WB_US_GDP_GROWTH',
+      name: '美国GDP增速',
+      region: 'US',
+      country: 'USA',
+      indicator: 'NY.GDP.MKTP.KD.ZG',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_US_GDP_PER_CAPITA',
+      name: '美国人均GDP',
+      region: 'US',
+      country: 'USA',
+      indicator: 'NY.GDP.PCAP.CD',
+      unit: '千美元',
+      frequency: '年度',
+      scale: 1e3,
+    },
+    {
+      id: 'WB_US_CPI_INFLATION',
+      name: '美国通胀(CPI)',
+      region: 'US',
+      country: 'USA',
+      indicator: 'FP.CPI.TOTL.ZG',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_US_UNEMPLOY',
+      name: '美国失业率',
+      region: 'US',
+      country: 'USA',
+      indicator: 'SL.UEM.TOTL.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_US_POP',
+      name: '美国人口',
+      region: 'US',
+      country: 'USA',
+      indicator: 'SP.POP.TOTL',
+      unit: '亿人',
+      frequency: '年度',
+      scale: 1e8,
+    },
+    {
+      id: 'WB_US_LIFE_EXPECT',
+      name: '美国预期寿命',
+      region: 'US',
+      country: 'USA',
+      indicator: 'SP.DYN.LE00.IN',
+      unit: '岁',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_US_URBAN_RATE',
+      name: '美国城镇化率',
+      region: 'US',
+      country: 'USA',
+      indicator: 'SP.URB.TOTL.IN.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_US_DEBT_GDP',
+      name: '美国政府债务/ GDP',
+      region: 'US',
+      country: 'USA',
+      indicator: 'GC.DOD.TOTL.GD.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_US_TRADE_GDP',
+      name: '美国贸易额/ GDP',
+      region: 'US',
+      country: 'USA',
+      indicator: 'NE.TRD.GNFS.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_US_EXPORT_GDP',
+      name: '美国出口/ GDP',
+      region: 'US',
+      country: 'USA',
+      indicator: 'NE.EXP.GNFS.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_US_IMPORT_GDP',
+      name: '美国进口/ GDP',
+      region: 'US',
+      country: 'USA',
+      indicator: 'NE.IMP.GNFS.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_US_FDI_GDP',
+      name: '美国FDI净流入/ GDP',
+      region: 'US',
+      country: 'USA',
+      indicator: 'BX.KLT.DINV.WD.GD.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_US_RESERVES_USD',
+      name: '美国外汇储备(含黄金)',
+      region: 'US',
+      country: 'USA',
+      indicator: 'FI.RES.TOTL.CD',
+      unit: '亿美元',
+      frequency: '年度',
+      scale: 1e8,
+    },
+    {
+      id: 'WB_US_CA_USD',
+      name: '美国经常账户余额',
+      region: 'US',
+      country: 'USA',
+      indicator: 'BN.CAB.XOKA.CD',
+      unit: '亿美元',
+      frequency: '年度',
+      scale: 1e8,
+    },
+    {
+      id: 'WB_US_CA_GDP',
+      name: '美国经常账户/ GDP',
+      region: 'US',
+      country: 'USA',
+      indicator: 'BN.CAB.XOKA.GD.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    // CN
+    {
+      id: 'WB_CN_GDP_CURRENT',
+      name: '中国GDP(现价)',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'NY.GDP.MKTP.CD',
+      unit: '万亿美元',
+      frequency: '年度',
+      scale: 1e12,
+    },
+    {
+      id: 'WB_CN_GDP_GROWTH',
+      name: '中国GDP增速',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'NY.GDP.MKTP.KD.ZG',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_CN_GDP_PER_CAPITA',
+      name: '中国人均GDP',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'NY.GDP.PCAP.CD',
+      unit: '千美元',
+      frequency: '年度',
+      scale: 1e3,
+    },
+    {
+      id: 'WB_CN_CPI_INFLATION',
+      name: '中国通胀(CPI)',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'FP.CPI.TOTL.ZG',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_CN_UNEMPLOY',
+      name: '中国失业率',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'SL.UEM.TOTL.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_CN_POP',
+      name: '中国人口',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'SP.POP.TOTL',
+      unit: '亿人',
+      frequency: '年度',
+      scale: 1e8,
+    },
+    {
+      id: 'WB_CN_LIFE_EXPECT',
+      name: '中国预期寿命',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'SP.DYN.LE00.IN',
+      unit: '岁',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_CN_URBAN_RATE',
+      name: '中国城镇化率',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'SP.URB.TOTL.IN.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_CN_DEBT_GDP',
+      name: '中国政府债务/ GDP',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'GC.DOD.TOTL.GD.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_CN_TRADE_GDP',
+      name: '中国贸易额/ GDP',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'NE.TRD.GNFS.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_CN_EXPORT_GDP',
+      name: '中国出口/ GDP',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'NE.EXP.GNFS.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_CN_IMPORT_GDP',
+      name: '中国进口/ GDP',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'NE.IMP.GNFS.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_CN_FDI_GDP',
+      name: '中国FDI净流入/ GDP',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'BX.KLT.DINV.WD.GD.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_CN_RESERVES_USD',
+      name: '中国外汇储备(含黄金)',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'FI.RES.TOTL.CD',
+      unit: '亿美元',
+      frequency: '年度',
+      scale: 1e8,
+    },
+    {
+      id: 'WB_CN_CA_USD',
+      name: '中国经常账户余额',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'BN.CAB.XOKA.CD',
+      unit: '亿美元',
+      frequency: '年度',
+      scale: 1e8,
+    },
+    {
+      id: 'WB_CN_CA_GDP',
+      name: '中国经常账户/ GDP',
+      region: 'CN',
+      country: 'CHN',
+      indicator: 'BN.CAB.XOKA.GD.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    // World aggregate
+    {
+      id: 'WB_WLD_GDP_CURRENT',
+      name: '全球GDP(现价)',
+      region: 'WLD',
+      country: 'WLD',
+      indicator: 'NY.GDP.MKTP.CD',
+      unit: '万亿美元',
+      frequency: '年度',
+      scale: 1e12,
+    },
+    {
+      id: 'WB_WLD_GDP_GROWTH',
+      name: '全球GDP增速',
+      region: 'WLD',
+      country: 'WLD',
+      indicator: 'NY.GDP.MKTP.KD.ZG',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_WLD_GDP_PER_CAPITA',
+      name: '全球人均GDP',
+      region: 'WLD',
+      country: 'WLD',
+      indicator: 'NY.GDP.PCAP.CD',
+      unit: '千美元',
+      frequency: '年度',
+      scale: 1e3,
+    },
+    {
+      id: 'WB_WLD_CPI_INFLATION',
+      name: '全球通胀(CPI)',
+      region: 'WLD',
+      country: 'WLD',
+      indicator: 'FP.CPI.TOTL.ZG',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_WLD_POP',
+      name: '全球人口',
+      region: 'WLD',
+      country: 'WLD',
+      indicator: 'SP.POP.TOTL',
+      unit: '亿人',
+      frequency: '年度',
+      scale: 1e8,
+    },
+    {
+      id: 'WB_WLD_TRADE_GDP',
+      name: '全球贸易额/ GDP',
+      region: 'WLD',
+      country: 'WLD',
+      indicator: 'NE.TRD.GNFS.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+    {
+      id: 'WB_WLD_FDI_GDP',
+      name: '全球FDI净流入/ GDP',
+      region: 'WLD',
+      country: 'WLD',
+      indicator: 'BX.KLT.DINV.WD.GD.ZS',
+      unit: '%',
+      frequency: '年度',
+    },
+  ];
+
+  const concurrency = 8;
+  const out: (MacroItem & { history?: MacroHistoryPoint[] })[] = [];
+  let cursor = 0;
+
+  const workers = Array.from({ length: concurrency }).map(async () => {
+    while (cursor < configs.length) {
+      const cfg = configs[cursor];
+      cursor += 1;
+      if (!cfg) continue;
+
+      try {
+        const { latest, prev } = await fetchWorldBankIndicatorLatest(
+          cfg.country,
+          cfg.indicator,
+        );
+        if (!latest) continue;
+
+        const scale = cfg.scale ?? 1;
+        const value = latest.value / scale;
+        const prevValue = prev ? prev.value / scale : undefined;
+
+        out.push({
+          id: cfg.id,
+          name: cfg.name,
+          region: cfg.region,
+          value,
+          unit: cfg.unit,
+          period: latest.date,
+          prev_value: prevValue,
+          prev_period: prev?.date,
+          frequency: cfg.frequency,
+          history: [
+            { period: latest.date, value },
+            ...(prev ? [{ period: prev.date, value: prevValue! }] : []),
+          ],
+        });
+      } catch (err) {
+        console.error('WorldBank fetch failed:', cfg.id, err);
+      }
+    }
+  });
+
+  await Promise.all(workers);
+  out.sort((a, b) => a.region.localeCompare(b.region) || a.name.localeCompare(b.name));
+  return out;
 };
 
 const getPublicEconomySummary = async (opts?: {
@@ -816,6 +1248,14 @@ const getPublicEconomySummary = async (opts?: {
     console.error('FX fetch failed', err);
   }
 
+  // World Bank (annual, lagged). Best-effort enrichment.
+  try {
+    const wb = await fetchWorldBankMacroItems();
+    if (wb.length) macro.push(...wb);
+  } catch (err) {
+    console.error('WorldBank macro fetch failed', err);
+  }
+
   // Daily ticker should only show latest snapshot; leave list-building to the client.
   const tickerMarket: MarketItem[] = market.map(({ history, ...rest }) => rest);
 
@@ -1238,6 +1678,19 @@ export const GET = async () => {
                 },
               ],
             }));
+
+      // Always enrich with World Bank annual indicators (best-effort).
+      try {
+        const wb = await fetchWorldBankMacroItems();
+        if (wb.length) {
+          const existing = new Set(macro.map((m) => m.id));
+          for (const item of wb) {
+            if (!existing.has(item.id)) macro.push(item);
+          }
+        }
+      } catch (err) {
+        console.error('WorldBank macro fetch failed (tushare path)', err);
+      }
 
       macroUpdatedAt = Date.now();
     }
