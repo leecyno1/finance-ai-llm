@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import SmallNewsCard from '@/components/Discover/SmallNewsCard';
 import MajorNewsCard from '@/components/Discover/MajorNewsCard';
+import { getLanguage } from '@/lib/config/clientRegistry';
 
 export interface Discover {
   title: string;
@@ -14,26 +15,31 @@ export interface Discover {
   thumbnail?: string;
 }
 
-const topics: { key: string; display: string }[] = [
+const topics: { key: string; en: string; zh: string }[] = [
   {
-    display: 'Tech & Science',
     key: 'tech',
+    en: 'Tech & Science',
+    zh: '科技',
   },
   {
-    display: 'Finance',
     key: 'finance',
+    en: 'Finance',
+    zh: '财经',
   },
   {
-    display: 'Art & Culture',
     key: 'art',
+    en: 'Art & Culture',
+    zh: '艺术与文化',
   },
   {
-    display: 'Sports',
     key: 'sports',
+    en: 'Sports',
+    zh: '体育',
   },
   {
-    display: 'Entertainment',
     key: 'entertainment',
+    en: 'Entertainment',
+    zh: '娱乐',
   },
 ];
 
@@ -41,6 +47,13 @@ const Page = () => {
   const [discover, setDiscover] = useState<Discover[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTopic, setActiveTopic] = useState<string>(topics[0].key);
+  const [language, setLanguage] = useState<'en' | 'zh'>(() =>
+    typeof window !== 'undefined'
+      ? ((getLanguage() as 'en' | 'zh' | undefined) ?? 'zh')
+      : 'zh',
+  );
+
+  const t = (en: string, zh: string) => (language === 'zh' ? zh : en);
 
   const fetchArticles = async (topic: string) => {
     setLoading(true);
@@ -76,6 +89,27 @@ const Page = () => {
     fetchArticles(activeTopic);
   }, [activeTopic]);
 
+  useEffect(() => {
+    const updateLanguage = () => {
+      setLanguage(
+        ((getLanguage() as 'en' | 'zh' | undefined) ?? 'zh') as 'en' | 'zh',
+      );
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('client-config-changed', updateLanguage);
+      window.addEventListener('storage', updateLanguage);
+      updateLanguage();
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('client-config-changed', updateLanguage);
+        window.removeEventListener('storage', updateLanguage);
+      }
+    };
+  }, []);
+
   return (
     <>
       <div>
@@ -87,7 +121,7 @@ const Page = () => {
                 className="text-5xl font-normal p-2"
                 style={{ fontFamily: 'PP Editorial, serif' }}
               >
-                Discover
+                {t('Discover', '发现')}
               </h1>
             </div>
             <div className="flex flex-row items-center space-x-2 overflow-x-auto">
@@ -102,7 +136,7 @@ const Page = () => {
                   )}
                   onClick={() => setActiveTopic(t.key)}
                 >
-                  <span>{t.display}</span>
+                  <span>{language === 'zh' ? t.zh : t.en}</span>
                 </div>
               ))}
             </div>
@@ -132,7 +166,10 @@ const Page = () => {
           <div className="flex flex-col gap-4 pb-28 pt-5 lg:pb-8 w-full">
             {discover && discover.length === 0 && (
               <div className="px-2 py-10 text-center text-sm text-black/60 dark:text-white/60">
-                暂无可显示内容。请在设置中配置可用的 SearXNG URL（或稍后重试）。
+                {t(
+                  'No content to display. Please configure a working SearXNG URL in Settings (or try again later).',
+                  '暂无可显示内容。请在设置中配置可用的 SearXNG URL（或稍后重试）。',
+                )}
               </div>
             )}
             <div className="block lg:hidden">
