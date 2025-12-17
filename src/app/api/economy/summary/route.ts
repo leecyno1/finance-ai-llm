@@ -4,6 +4,7 @@ import { callTushare, hasTushareToken, TushareApiError } from '@/lib/economy/tus
 import {
   fetchStooqDaily,
   fetchTencentKlineDaily,
+  fetchCboeVixDaily,
   fetchErApiUsdLatest,
   fetchFredLatest,
   fetchLprLatest,
@@ -394,6 +395,8 @@ const getPublicEconomySummary = async (opts?: {
     { id: '^dax', name: '德国DAX', region: 'EU', kind: 'stooq' as const },
     { id: '^cac', name: '法国CAC40', region: 'EU', kind: 'stooq' as const },
     { id: '^ukx', name: '英国FTSE 100', region: 'EU', kind: 'stooq' as const },
+    // Volatility index (CBOE)
+    { id: 'VIX', name: 'VIX恐慌指数', region: 'US', kind: 'cboe_vix' as const },
   ];
 
   const market: (MarketItem & { history?: MarketHistoryPoint[] })[] = [];
@@ -402,6 +405,38 @@ const getPublicEconomySummary = async (opts?: {
     try {
       if (s.kind === 'stooq') {
         const rows = await fetchStooqDaily(s.id, {
+          fromYYYYMMDD: d1,
+          toYYYYMMDD: d2,
+        });
+        if (rows.length < 2) continue;
+        rows.sort((a, b) => a.date.localeCompare(b.date));
+        const latest = rows[rows.length - 1];
+        const prev = rows[rows.length - 2];
+        const pct = prev.close
+          ? ((latest.close - prev.close) / prev.close) * 100
+          : 0;
+
+        market.push({
+          id: s.id,
+          name: s.name,
+          region: s.region,
+          close: latest.close,
+          pct_chg: pct,
+          trade_date: latest.date.replace(/-/g, ''),
+          unit: '点',
+          frequency: '日度',
+          history: rows.map((r, idx) => ({
+            trade_date: r.date.replace(/-/g, ''),
+            close: r.close,
+            pct_chg:
+              idx === 0 || rows[idx - 1].close === 0
+                ? 0
+                : ((r.close - rows[idx - 1].close) / rows[idx - 1].close) *
+                  100,
+          })),
+        });
+      } else if (s.kind === 'cboe_vix') {
+        const rows = await fetchCboeVixDaily({
           fromYYYYMMDD: d1,
           toYYYYMMDD: d2,
         });

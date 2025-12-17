@@ -7,6 +7,24 @@ interface Article {
   thumbnail: string;
 }
 
+const getThumbnailSrc = (thumbnail: string | undefined, baseUrl?: string) => {
+  if (!thumbnail) return '/dr-lemon-logo.svg';
+  const trimmed = thumbnail.trim();
+  if (!trimmed) return '/dr-lemon-logo.svg';
+
+  // Allow local API/image paths (e.g. /api/og-image?... or /dr-lemon-logo.svg)
+  if (trimmed.startsWith('/api/') || trimmed.startsWith('/dr-')) return trimmed;
+
+  try {
+    const resolved = baseUrl ? new URL(trimmed, baseUrl) : new URL(trimmed);
+    return `/api/image-proxy?url=${encodeURIComponent(resolved.toString())}`;
+  } catch {
+    // protocol-relative URL like //example.com/a.jpg
+    if (trimmed.startsWith('//')) return `https:${trimmed}`;
+    return '/dr-lemon-logo.svg';
+  }
+};
+
 const NewsArticleWidget = () => {
   const [article, setArticle] = useState<Article | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,12 +64,14 @@ const NewsArticleWidget = () => {
           <div className="relative w-24 min-w-24 max-w-24 h-full overflow-hidden">
             <img
               className="object-cover w-full h-full bg-light-200 dark:bg-dark-200 group-hover:scale-110 transition-transform duration-300"
-              src={
-                new URL(article.thumbnail).origin +
-                new URL(article.thumbnail).pathname +
-                `?id=${new URL(article.thumbnail).searchParams.get('id')}`
-              }
+              src={getThumbnailSrc(article.thumbnail, article.url)}
               alt={article.title}
+              onError={(e) => {
+                const el = e.currentTarget;
+                if (el.dataset.fallbackApplied) return;
+                el.dataset.fallbackApplied = '1';
+                el.src = '/dr-lemon-logo.svg';
+              }}
             />
           </div>
           <div className="flex flex-col justify-center flex-1 px-3 py-2">

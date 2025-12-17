@@ -30,6 +30,12 @@ const MajorNewsCard = ({
             className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-500"
             src={getThumbnailSrc(item.thumbnail)}
             alt={item.title}
+            onError={(e) => {
+              const el = e.currentTarget;
+              if (el.dataset.fallbackApplied) return;
+              el.dataset.fallbackApplied = '1';
+              el.src = '/dr-lemon-logo.svg';
+            }}
           />
         </div>
         <div className="flex flex-col justify-center flex-1 py-4">
@@ -62,6 +68,12 @@ const MajorNewsCard = ({
             className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-500"
             src={getThumbnailSrc(item.thumbnail)}
             alt={item.title}
+            onError={(e) => {
+              const el = e.currentTarget;
+              if (el.dataset.fallbackApplied) return;
+              el.dataset.fallbackApplied = '1';
+              el.src = '/dr-lemon-logo.svg';
+            }}
           />
         </div>
       </>

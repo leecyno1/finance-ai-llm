@@ -3,6 +3,11 @@ type StooqDailyRow = {
   close: number;
 };
 
+type CboeDailyRow = {
+  date: string; // YYYY-MM-DD
+  close: number;
+};
+
 type TencentDailyRow = {
   date: string; // YYYY-MM-DD
   close: number;
@@ -45,6 +50,46 @@ export const fetchStooqDaily = async (
       const date = cols[0];
       const close = Number(cols[4]);
       if (!date || Number.isNaN(close)) continue;
+      rows.push({ date, close });
+    }
+    return rows;
+  }, 12_000);
+};
+
+const parseCboeDate = (mmddyyyy: string) => {
+  const [mm, dd, yyyy] = mmddyyyy.split('/');
+  if (!mm || !dd || !yyyy) return '';
+  return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+};
+
+export const fetchCboeVixDaily = async (opts?: {
+  fromYYYYMMDD?: string;
+  toYYYYMMDD?: string;
+}): Promise<CboeDailyRow[]> => {
+  const url =
+    'https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv';
+
+  return withTimeout(async (signal) => {
+    const res = await fetch(url, { cache: 'no-store', signal });
+    if (!res.ok) throw new Error(`CBOE VIX HTTP error: ${res.status}`);
+    const text = await res.text();
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 2) return [];
+
+    // header: DATE,OPEN,HIGH,LOW,CLOSE
+    const rows: CboeDailyRow[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',');
+      const dateRaw = String(cols[0] ?? '').trim();
+      const close = Number(cols[4]);
+      const date = parseCboeDate(dateRaw);
+      if (!date || Number.isNaN(close)) continue;
+
+      // filter by [d1, d2] if provided
+      const yyyymmdd = date.replace(/-/g, '');
+      if (opts?.fromYYYYMMDD && yyyymmdd < opts.fromYYYYMMDD) continue;
+      if (opts?.toYYYYMMDD && yyyymmdd > opts.toYYYYMMDD) continue;
+
       rows.push({ date, close });
     }
     return rows;

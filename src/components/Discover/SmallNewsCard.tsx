@@ -22,6 +22,12 @@ const SmallNewsCard = ({ item }: { item: Discover }) => (
         className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
         src={getThumbnailSrc(item.thumbnail)}
         alt={item.title}
+        onError={(e) => {
+          const el = e.currentTarget;
+          if (el.dataset.fallbackApplied) return;
+          el.dataset.fallbackApplied = '1';
+          el.src = '/dr-lemon-logo.svg';
+        }}
       />
     </div>
     <div className="p-4">
