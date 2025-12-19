@@ -29,4 +29,9 @@ fi
 cd /home/perplexica
 echo "Starting Perplexica..."
 
+if [ "${CACHE_WORKER_ENABLED:-true}" != "false" ]; then
+  echo "Starting cache worker..."
+  node /home/perplexica/scripts/cache-worker.js &
+fi
+
 exec node server.js

@@ -34,6 +34,7 @@ COPY --from=builder /home/perplexica/.next/static ./public/_next/static
 COPY --from=builder /home/perplexica/.next/standalone ./
 COPY --from=builder /home/perplexica/data ./data
 COPY drizzle ./drizzle
+COPY scripts ./scripts
 
 RUN mkdir /home/perplexica/uploads
 

@@ -8,7 +8,8 @@ type NewsCache = {
 };
 
 const DATA_DIR = process.env.DATA_DIR || process.cwd();
-const NEWS_CACHE_PATH = path.join(DATA_DIR, '/data/news-cache.json');
+// NOTE: keep separate from /api/news/finance cache format to avoid conflicts.
+const NEWS_CACHE_PATH = path.join(DATA_DIR, '/data/economy-news-cache.json');
 
 // 缓存时间：5 分钟
 const CACHE_TTL = 5 * 60 * 1000;
