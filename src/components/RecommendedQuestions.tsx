@@ -15,8 +15,17 @@ const RecommendedQuestions = () => {
   const { sendMessage } = useChat();
   const [suggestions, setSuggestions] = useState<SuggestedQuestion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [language, setLanguage] = useState<'zh' | 'en'>('zh');
 
   useEffect(() => {
+    const syncLanguage = () => {
+      const l = (localStorage.getItem('language') || 'zh').toLowerCase();
+      setLanguage(l === 'en' ? 'en' : 'zh');
+    };
+
+    syncLanguage();
+    window.addEventListener('client-config-changed', syncLanguage);
+
     const fetchSuggestions = async () => {
       try {
         const res = await fetch('/api/news/suggestions');
@@ -33,6 +42,8 @@ const RecommendedQuestions = () => {
     };
 
     fetchSuggestions();
+
+    return () => window.removeEventListener('client-config-changed', syncLanguage);
   }, []);
 
   if (loading || !suggestions.length) {
@@ -48,10 +59,12 @@ const RecommendedQuestions = () => {
     <div className="w-full rounded-2xl border border-light-200 dark:border-dark-200 bg-light-secondary/60 dark:bg-dark-secondary/60 px-3 py-2.5 space-y-2">
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold text-black/70 dark:text-white/70">
-          推荐提问
+          {language === 'en' ? 'Suggested Questions' : '推荐提问'}
         </p>
         <p className="text-[10px] text-black/40 dark:text-white/40">
-          基于最新财经快讯自动生成
+          {language === 'en'
+            ? 'From popular questions + latest news'
+            : '基于历史高频 + 最新快讯'}
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -79,4 +92,3 @@ const RecommendedQuestions = () => {
 };
 
 export default RecommendedQuestions;
-

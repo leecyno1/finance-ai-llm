@@ -12,9 +12,10 @@ The default response language is Chinese; it switches to English when the UI lan
 - **经济数据看板**：TuShare 指数/宏观数据（可选），支持缓存与增量更新。
 - **智能问答**：基于 LangChain，支持多家模型提供商（OpenAI 兼容 / Anthropic / Groq / Google / Ollama 等）。
 - **检索增强**：内置 SearXNG（容器内默认 8080），也可指向自建 SearXNG。
-- **简洁交互**：推荐提问（固定高频 + 最新快讯），一键发问。
+- **简洁交互**：推荐提问（历史高频 + 最新快讯），一键发问。
 - **配置保护**：输入暗号 `8899174` 可显示/隐藏设置按钮，适合公开演示。
 - **Docker 化部署**：提供包含 SearXNG 的镜像构建，并支持 data/uploads 持久化。
+- **天气卡片**：默认北京；未授权定位时按访问者 IP 粗定位（可关闭定位权限也能用）。
 
 ## 适用场景（Use Cases）
 - **盘前/盘中速览**：快速获取市场要闻与宏观变化。
@@ -34,6 +35,14 @@ yarn dev -p 3000
 推荐从环境变量模板开始：复制 `.env.example` 为 `.env.local` 并按需填写（例如 TuShare、新闻源开关、模型 API Key、SearXNG URL）。
 
 访问 `http://localhost:3000`。
+
+## 并发与容量（Concurrency & Capacity）
+本项目没有“写死的并发人数上限”，实际并发主要由 3 个因素决定：
+1) **模型 API 的 QPS/并发限制**（最常见瓶颈）
+2) **容器资源**（CPU/内存，尤其是检索与流式输出）
+3) **搜索与新闻数据源**（SearXNG/外部源的可用性与限流）
+
+经验值（仅供估算）：单副本 1 vCPU / 2GB 内存，一般可支撑 **5–20 个**轻量并发会话；重检索/长回答会更低。需要更高并发时，优先 **提升资源或多副本扩容**，并关注上游模型的并发与速率限制。
 
 ## Docker 构建与运行（Docker）
 ```bash

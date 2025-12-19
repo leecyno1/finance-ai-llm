@@ -16,12 +16,27 @@ const WeatherWidget = () => {
   const [loading, setLoading] = useState(true);
 
   const getApproxLocation = async () => {
-    // Default to Beijing if more specific location is not available
-    return {
-      latitude: 39.9042,
-      longitude: 116.4074,
-      city: 'Beijing',
-    };
+    try {
+      const res = await fetch('/api/geo', { method: 'GET' });
+      if (!res.ok) throw new Error(`geo failed: ${res.status}`);
+      const data = (await res.json()) as {
+        latitude: number;
+        longitude: number;
+        city: string;
+      };
+      if (!data?.latitude || !data?.longitude) throw new Error('geo invalid');
+      return {
+        latitude: data.latitude,
+        longitude: data.longitude,
+        city: data.city || 'Beijing',
+      };
+    } catch {
+      return {
+        latitude: 39.9042,
+        longitude: 116.4074,
+        city: 'Beijing',
+      };
+    }
   };
 
   const getLocation = async (

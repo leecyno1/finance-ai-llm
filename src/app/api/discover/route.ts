@@ -10,20 +10,20 @@ const websitesForTopic = {
   },
   finance: {
     query: [
-      '财经 新闻',
-      '宏观经济',
-      '股市',
-      'A股',
-      '港股',
-      '美股',
-      '经济数据',
+      'US markets news',
+      'Federal Reserve',
+      'inflation data',
+      'earnings',
+      'stocks',
+      'bonds',
+      'macro data',
     ],
     links: [
-      // Discover 财经主要走 RSS 聚合（新浪/中新网/人民网）
-      // 这里保留 searxng 搜索兜底的域名（如未配置 SearXNG，则不会走到这里）
-      'finance.sina.com.cn', // 新浪财经
-      'chinanews.com.cn', // 中新网
-      'people.com.cn', // 人民网
+      // Discover Finance: prefer US sources (RSS-first); keep these for SearXNG fallback.
+      'cnbc.com',
+      'marketwatch.com',
+      'finance.yahoo.com',
+      'nasdaq.com',
     ],
   },
   art: {
@@ -44,24 +44,23 @@ type Topic = keyof typeof websitesForTopic;
 
 const DEMO_FINANCE_BLOGS = [
   {
-    title: '示例：A股收盘涨跌不一，权重股与成长股分化',
-    url: 'https://finance.sina.com.cn',
+    title: 'Demo: Markets digest — key moves across stocks, rates, and macro',
+    url: 'https://www.cnbc.com',
     content:
-      '示例数据：用于展示财经快讯效果，实际数据需在设置中配置 SearXNG 搜索源后获取实时新闻。',
+      'Demo data: shown only when finance feeds are temporarily unavailable.',
     thumbnail: '',
   },
   {
-    title: '示例：宏观数据与利率预期变化，扰动全球市场',
-    url: 'https://www.chinanews.com.cn/rss/finance.xml',
+    title: 'Demo: Fed / inflation updates — what matters next for risk assets',
+    url: 'https://www.marketwatch.com',
     content:
-      '示例数据：用于在新闻源不可用时兜底展示，实际数据将来自新浪/中新网/人民网的 RSS 聚合。',
+      'Demo data: shown only when finance feeds are temporarily unavailable.',
     thumbnail: '',
   },
   {
-    title: '示例：政策与产业动态影响市场情绪，关注后续演进',
-    url: 'https://www.people.com.cn/rss/finance.xml',
-    content:
-      '示例数据：用于在新闻源不可用时兜底展示。',
+    title: 'Demo: Earnings and sector rotation — quick scan + follow-ups',
+    url: 'https://finance.yahoo.com',
+    content: 'Demo data: shown only when finance feeds are temporarily unavailable.',
     thumbnail: '',
   },
 ];
@@ -273,11 +272,12 @@ const parseGenericRss = (xml: string, feedUrl?: string): FinanceBlog[] => {
 
 const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
   const rssFeeds = [
-    'http://rss.sina.com.cn/roll/finance/hot_roll.xml', // 财经要闻汇总
-    'http://rss.sina.com.cn/news/allnews/finance.xml', // 财经焦点新闻
-    'http://rss.sina.com.cn/roll/stock/hot_roll.xml', // 股票要闻
-    'https://www.chinanews.com.cn/rss/finance.xml', // 中国新闻网-财经
-    'https://www.people.com.cn/rss/finance.xml', // 人民网-财经
+    'https://www.cnbc.com/id/100003114/device/rss/rss.html', // CNBC Top News
+    'https://www.cnbc.com/id/15839069/device/rss/rss.html', // CNBC Markets
+    'https://www.marketwatch.com/rss/topstories', // MarketWatch
+    'https://feeds.content.dowjones.io/public/rss/mw_topstories', // MarketWatch (DJ)
+    'https://finance.yahoo.com/rss/topstories', // Yahoo Finance
+    'https://www.nasdaq.com/feed/rssoutbound?category=markets', // Nasdaq Markets
   ];
 
   const results = await Promise.allSettled(
@@ -287,7 +287,6 @@ const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
         throw new Error(`RSS HTTP error: ${res.status}`);
       }
       const xml = await res.text();
-      if (url.includes('rss.sina.com.cn')) return parseSinaRss(xml, url);
       return parseGenericRss(xml, url);
     }),
   );

@@ -9,6 +9,7 @@ import { searchHandlers } from '@/lib/search';
 import { z } from 'zod';
 import ModelRegistry from '@/lib/models/registry';
 import { ModelWithProvider } from '@/lib/models/types';
+import { getClientIdFromHeaders } from '@/lib/server/client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -96,6 +97,7 @@ const handleEmitterEvents = async (
   writer: WritableStreamDefaultWriter,
   encoder: TextEncoder,
   chatId: string,
+  owner: string,
 ) => {
   let receivedMessage = '';
   const aiMessageId = crypto.randomBytes(7).toString('hex');
@@ -129,6 +131,7 @@ const handleEmitterEvents = async (
 
       db.insert(messagesSchema)
         .values({
+          owner,
           chatId: chatId,
           messageId: sourceMessageId,
           role: 'source',
@@ -150,6 +153,7 @@ const handleEmitterEvents = async (
 
     db.insert(messagesSchema)
       .values({
+        owner,
         content: receivedMessage,
         chatId: chatId,
         messageId: aiMessageId,
@@ -177,10 +181,15 @@ const handleHistorySave = async (
   humanMessageId: string,
   focusMode: string,
   files: string[],
+  owner: string,
 ) => {
   const chat = await db.query.chats.findFirst({
     where: eq(chats.id, message.chatId),
   });
+
+  if (chat && chat.owner && chat.owner !== owner) {
+    throw new Error('Forbidden chat access');
+  }
 
   const fileData = files.map(getFileDetails);
 
@@ -192,15 +201,18 @@ const handleHistorySave = async (
         title: message.content,
         createdAt: new Date().toString(),
         focusMode: focusMode,
+        owner,
         files: fileData,
       })
       .execute();
   } else if (JSON.stringify(chat.files ?? []) != JSON.stringify(fileData)) {
-    db.update(chats)
+    await db
+      .update(chats)
       .set({
         files: files.map(getFileDetails),
       })
-      .where(eq(chats.id, message.chatId));
+      .where(eq(chats.id, message.chatId))
+      .execute();
   }
 
   const messageExists = await db.query.messages.findFirst({
@@ -216,6 +228,7 @@ const handleHistorySave = async (
         messageId: humanMessageId,
         role: 'user',
         createdAt: new Date().toString(),
+        owner,
       })
       .execute();
   } else {
@@ -233,6 +246,7 @@ const handleHistorySave = async (
 
 export const POST = async (req: Request) => {
   try {
+    const owner = getClientIdFromHeaders(new Headers(req.headers));
     const reqBody = (await req.json()) as Body;
 
     const parseBody = safeValidateBody(reqBody);
@@ -305,8 +319,8 @@ export const POST = async (req: Request) => {
     const writer = responseStream.writable.getWriter();
     const encoder = new TextEncoder();
 
-    handleEmitterEvents(stream, writer, encoder, message.chatId);
-    handleHistorySave(message, humanMessageId, body.focusMode, body.files);
+    handleEmitterEvents(stream, writer, encoder, message.chatId, owner);
+    handleHistorySave(message, humanMessageId, body.focusMode, body.files, owner);
 
     return new Response(responseStream.readable, {
       headers: {
