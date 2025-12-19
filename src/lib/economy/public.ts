@@ -169,8 +169,19 @@ export const fetchTencentKlineDaily = async (
 
 type TreasuryYieldRow = {
   date: string; // YYYY-MM-DD
+  m1?: number;
+  m2?: number;
+  m3?: number;
+  m4?: number;
+  m6?: number;
+  y1?: number;
   y2?: number;
+  y3?: number;
+  y5?: number;
+  y7?: number;
   y10?: number;
+  y20?: number;
+  y30?: number;
 };
 
 const parseTreasuryDate = (mmddyyyy: string) => {
@@ -200,10 +211,30 @@ export const fetchTreasuryYieldCurveLatest = async (): Promise<{
     const lines = text.split(/\r?\n/).filter(Boolean);
     if (lines.length < 2) return {};
 
-    const header = lines[0].split(',').map((h) => h.trim());
-    const idxDate = header.findIndex((h) => h.toLowerCase() === 'date');
-    const idx2 = header.findIndex((h) => h.toLowerCase() === '2 yr');
-    const idx10 = header.findIndex((h) => h.toLowerCase() === '10 yr');
+    const header = lines[0]
+      .split(',')
+      .map((h) => h.trim().replace(/^\"|\"$/g, ''));
+    const norm = (h: string) => h.toLowerCase().replace(/\s+/g, ' ').trim();
+    const idxDate = header.findIndex((h) => norm(h) === 'date');
+
+    const idxByLabel = (label: string) =>
+      header.findIndex((h) => norm(h) === norm(label));
+
+    const indices = {
+      m1: idxByLabel('1 mo'),
+      m2: idxByLabel('2 mo'),
+      m3: idxByLabel('3 mo'),
+      m4: idxByLabel('4 mo'),
+      m6: idxByLabel('6 mo'),
+      y1: idxByLabel('1 yr'),
+      y2: idxByLabel('2 yr'),
+      y3: idxByLabel('3 yr'),
+      y5: idxByLabel('5 yr'),
+      y7: idxByLabel('7 yr'),
+      y10: idxByLabel('10 yr'),
+      y20: idxByLabel('20 yr'),
+      y30: idxByLabel('30 yr'),
+    } as const;
     if (idxDate < 0) return {};
 
     const parsed: TreasuryYieldRow[] = [];
@@ -212,16 +243,24 @@ export const fetchTreasuryYieldCurveLatest = async (): Promise<{
       const rawDate = cols[idxDate]?.trim();
       const date = rawDate ? parseTreasuryDate(rawDate) : '';
       if (!date) continue;
-      const y2 = idx2 >= 0 ? toNum(cols[idx2] ?? '') : undefined;
-      const y10 = idx10 >= 0 ? toNum(cols[idx10] ?? '') : undefined;
-      parsed.push({ date, y2, y10 });
+      const row: TreasuryYieldRow = { date };
+      for (const [key, idx] of Object.entries(indices) as Array<
+        [keyof typeof indices, number]
+      >) {
+        if (idx < 0) continue;
+        (row as any)[key] = toNum(cols[idx] ?? '');
+      }
+      parsed.push(row);
     }
 
     parsed.sort((a, b) => a.date.localeCompare(b.date));
     // Find latest row with at least one value
     let latestIdx = -1;
     for (let i = parsed.length - 1; i >= 0; i--) {
-      if (parsed[i].y2 !== undefined || parsed[i].y10 !== undefined) {
+      const hasAny = Object.entries(parsed[i]).some(
+        ([k, v]) => k !== 'date' && v !== undefined,
+      );
+      if (hasAny) {
         latestIdx = i;
         break;
       }
@@ -230,7 +269,10 @@ export const fetchTreasuryYieldCurveLatest = async (): Promise<{
     const latest = parsed[latestIdx];
     let prev: TreasuryYieldRow | undefined;
     for (let i = latestIdx - 1; i >= 0; i--) {
-      if (parsed[i].y2 !== undefined || parsed[i].y10 !== undefined) {
+      const hasAny = Object.entries(parsed[i]).some(
+        ([k, v]) => k !== 'date' && v !== undefined,
+      );
+      if (hasAny) {
         prev = parsed[i];
         break;
       }
@@ -288,31 +330,98 @@ export const fetchNbsLatest = async (opts: {
   );
 
   return withTimeout(async (signal) => {
-    const res = await fetch(base, { cache: 'no-store', signal });
-    if (!res.ok) throw new Error(`NBS HTTP error: ${res.status}`);
-    const json = (await res.json()) as any;
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0',
+      Referer: 'https://data.stats.gov.cn/',
+    };
+
+    const tryFetchJson = async (u: URL): Promise<any> => {
+      let res = await fetch(u, {
+        cache: 'no-store',
+        signal,
+        redirect: 'manual',
+        headers,
+      });
+
+      if (res.status >= 300 && res.status < 400) {
+        const cookie = (res.headers.get('set-cookie') || '').split(';')[0];
+        if (cookie) {
+          res = await fetch(u, {
+            cache: 'no-store',
+            signal,
+            redirect: 'manual',
+            headers: { ...headers, Cookie: cookie },
+          });
+        }
+      }
+
+      if (!res.ok) throw new Error(`NBS HTTP error: ${res.status}`);
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) return res.json();
+
+      // Fallback to proxy (bypasses occasional JS/WAF pages)
+      const httpUrl = u.toString().replace(/^https:\/\//, 'http://');
+      const proxyUrl = `https://r.jina.ai/${httpUrl}`;
+      const proxyRes = await fetch(proxyUrl, { cache: 'no-store', signal });
+      if (!proxyRes.ok) throw new Error(`NBS proxy HTTP error: ${proxyRes.status}`);
+      const text = await proxyRes.text();
+      const marker = 'Markdown Content:';
+      const idx = text.indexOf(marker);
+      if (idx < 0) throw new Error('NBS proxy did not return markdown content');
+      const jsonStr = text.slice(idx + marker.length).trim();
+      return JSON.parse(jsonStr);
+    };
+
+    const json = await tryFetchJson(base);
     const nodes: any[] = json?.returndata?.datanodes ?? [];
-    const points: Array<{ sj: string; v: number }> = [];
+    const zbMap = new Map<string, Array<{ sj: string; v: number }>>();
+
+    const zbNodes: any[] =
+      (json?.returndata?.wdnodes ?? []).find((w: any) => w?.wdcode === 'zb')
+        ?.nodes ?? [];
+    const unitByZb = new Map<string, string>();
+    for (const n of zbNodes) {
+      const code = String(n?.code ?? '').trim();
+      const unit = String(n?.unit ?? '').trim();
+      if (code) unitByZb.set(code, unit);
+    }
+
     for (const n of nodes) {
       const has = n?.data?.hasdata;
       const str = String(n?.data?.strdata ?? '').trim();
       if (!has || !str) continue;
-      const sj = String((n?.wds ?? []).find((w: any) => w.wdcode === 'sj')?.valuecode ?? '');
+      const sj = String(
+        (n?.wds ?? []).find((w: any) => w.wdcode === 'sj')?.valuecode ?? '',
+      );
+      const zb = String(
+        (n?.wds ?? []).find((w: any) => w.wdcode === 'zb')?.valuecode ?? '',
+      );
       const v = Number(str);
-      if (!sj || Number.isNaN(v)) continue;
-      points.push({ sj, v });
+      if (!sj || !zb || Number.isNaN(v)) continue;
+      const arr = zbMap.get(zb) ?? [];
+      arr.push({ sj, v });
+      zbMap.set(zb, arr);
     }
 
-    if (!points.length) return null;
-    points.sort((a, b) => sjSortKey(opts.dbcode, a.sj) - sjSortKey(opts.dbcode, b.sj));
-    const latest = points[points.length - 1];
-    const prev = points.length > 1 ? points[points.length - 2] : undefined;
+    const series =
+      zbMap.get(opts.zb) ??
+      (zbMap.size === 1 ? zbMap.values().next().value : undefined);
+
+    if (!series?.length) return null;
+
+    series.sort(
+      (a, b) => sjSortKey(opts.dbcode, a.sj) - sjSortKey(opts.dbcode, b.sj),
+    );
+    const latest = series[series.length - 1];
+    const prev = series.length > 1 ? series[series.length - 2] : undefined;
 
     return {
       period: parseNbsPeriod(opts.dbcode, latest.sj),
       value: latest.v,
       prev_period: prev ? parseNbsPeriod(opts.dbcode, prev.sj) : undefined,
       prev_value: prev?.v,
+      unit: unitByZb.get(opts.zb),
+      frequency: opts.dbcode === 'hgyd' ? '月度' : '季度',
     };
   }, 12_000);
 };
@@ -365,7 +474,9 @@ export const fetchLprLatest = async (): Promise<{
   }, 12_000);
 };
 
-export const fetchChinaBond10yLatest = async (): Promise<MacroLatest | null> => {
+export const fetchChinaBondYieldLatest = async (
+  tenorYears: 3 | 5 | 10,
+): Promise<MacroLatest | null> => {
   const now = new Date();
   const end = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
     now.getDate(),
@@ -379,7 +490,7 @@ export const fetchChinaBond10yLatest = async (): Promise<MacroLatest | null> => 
   const url = new URL('https://yield.chinabond.com.cn/cbweb-pbc-web/pbc/historyQuery');
   url.searchParams.set('startDate', startStr);
   url.searchParams.set('endDate', end);
-  url.searchParams.set('gjqx', '10');
+  url.searchParams.set('gjqx', String(tenorYears));
   url.searchParams.set('qxId', 'hzsylqx');
   url.searchParams.set('locale', 'zh_CN');
 
@@ -388,36 +499,46 @@ export const fetchChinaBond10yLatest = async (): Promise<MacroLatest | null> => 
     if (!res.ok) throw new Error(`ChinaBond HTTP error: ${res.status}`);
     const html = await res.text();
 
-    const rows: Array<{ date: string; y10: number }> = [];
+    const rows: Array<{ date: string; y: number }> = [];
     const trMatches = html.match(/<tr>[\s\S]*?<\/tr>/g) ?? [];
 
     for (const tr of trMatches) {
       // only keep rows that look like the table data rows
-      if (!tr.includes('Yield Curve') && !tr.includes('曲线')) continue;
+      if (!tr.includes('曲线')) continue;
       const tds = Array.from(tr.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)).map(
         (m) => m[1].replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim(),
       );
       if (tds.length < 9) continue;
       const date = tds[1];
-      const y10 = Number(tds[8]);
-      if (!/\\d{4}-\\d{2}-\\d{2}/.test(date) || Number.isNaN(y10)) continue;
-      rows.push({ date, y10 });
+      if (!/\d{4}-\d{2}-\d{2}/.test(date)) continue;
+      const numeric = tds
+        .slice(2)
+        .map((v) => v.trim())
+        .filter(Boolean)
+        .map((v) => Number(v))
+        .find((v) => !Number.isNaN(v));
+      if (numeric === undefined) continue;
+      rows.push({ date, y: numeric });
     }
 
     rows.sort((a, b) => a.date.localeCompare(b.date));
+    if (!rows.length) return null;
     const latest = rows[rows.length - 1];
     const prev = rows.length > 1 ? rows[rows.length - 2] : undefined;
 
     return {
       period: latest.date,
-      value: latest.y10,
+      value: latest.y,
       prev_period: prev?.date,
-      prev_value: prev?.y10,
+      prev_value: prev?.y,
       unit: '%',
       frequency: '日度',
     };
   }, 12_000);
 };
+
+export const fetchChinaBond10yLatest = async (): Promise<MacroLatest | null> =>
+  fetchChinaBondYieldLatest(10);
 
 export const fetchErApiUsdLatest = async (): Promise<Record<string, number> | null> => {
   const url = 'https://open.er-api.com/v6/latest/USD';

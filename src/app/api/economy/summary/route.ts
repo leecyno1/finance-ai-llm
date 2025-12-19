@@ -11,7 +11,7 @@ import {
   fetchLprLatest,
   fetchNbsLatest,
   fetchShiborLatest,
-  fetchChinaBond10yLatest,
+  fetchChinaBondYieldLatest,
   fetchTreasuryYieldCurveLatest,
 } from '@/lib/economy/public';
 
@@ -249,6 +249,92 @@ const DEMO_MARKET: MarketItem[] = [
     trade_date: '20250101',
   },
 ];
+
+const appendChinaNbsMacroExtras = async (
+  macro: (MacroItem & { history?: MacroHistoryPoint[] })[],
+) => {
+  const existing = new Set(macro.map((m) => m.id));
+
+  const series: Array<{
+    zb: string;
+    id: string;
+    name: string;
+    frequency: string;
+  }> = [
+    // 工业
+    { zb: 'A020101', id: 'CN_NBS_IND_VA_YOY', name: '中国规上工业增加值同比', frequency: '月度' },
+    { zb: 'A020102', id: 'CN_NBS_IND_VA_CUM', name: '中国规上工业增加值累计增长', frequency: '月度' },
+    { zb: 'A02080101', id: 'CN_NBS_IND_EXPORT_VALUE', name: '中国工业出口交货值(当期)', frequency: '月度' },
+    { zb: 'A02080103', id: 'CN_NBS_IND_EXPORT_YOY', name: '中国工业出口交货值同比', frequency: '月度' },
+
+    // 能源：发电
+    { zb: 'A03010G01', id: 'CN_NBS_PWR_GEN', name: '中国发电量(当期)', frequency: '月度' },
+    { zb: 'A03010G03', id: 'CN_NBS_PWR_GEN_YOY', name: '中国发电量同比', frequency: '月度' },
+    { zb: 'A03010H01', id: 'CN_NBS_PWR_THERMAL', name: '中国火力发电量(当期)', frequency: '月度' },
+    { zb: 'A03010H03', id: 'CN_NBS_PWR_THERMAL_YOY', name: '中国火力发电量同比', frequency: '月度' },
+    { zb: 'A03010I01', id: 'CN_NBS_PWR_HYDRO', name: '中国水力发电量(当期)', frequency: '月度' },
+    { zb: 'A03010I03', id: 'CN_NBS_PWR_HYDRO_YOY', name: '中国水力发电量同比', frequency: '月度' },
+    { zb: 'A03010K01', id: 'CN_NBS_PWR_WIND', name: '中国风力发电量(当期)', frequency: '月度' },
+    { zb: 'A03010K03', id: 'CN_NBS_PWR_WIND_YOY', name: '中国风力发电量同比', frequency: '月度' },
+    { zb: 'A03010L01', id: 'CN_NBS_PWR_SOLAR', name: '中国太阳能发电量(当期)', frequency: '月度' },
+    { zb: 'A03010L03', id: 'CN_NBS_PWR_SOLAR_YOY', name: '中国太阳能发电量同比', frequency: '月度' },
+
+    // 能源：煤/油/气（产量）
+    { zb: 'A03010101', id: 'CN_NBS_COAL', name: '中国原煤产量(当期)', frequency: '月度' },
+    { zb: 'A03010103', id: 'CN_NBS_COAL_YOY', name: '中国原煤产量同比', frequency: '月度' },
+    { zb: 'A03010201', id: 'CN_NBS_CRUDE_OIL', name: '中国原油产量(当期)', frequency: '月度' },
+    { zb: 'A03010203', id: 'CN_NBS_CRUDE_OIL_YOY', name: '中国原油产量同比', frequency: '月度' },
+    { zb: 'A03010301', id: 'CN_NBS_NATGAS', name: '中国天然气产量(当期)', frequency: '月度' },
+    { zb: 'A03010303', id: 'CN_NBS_NATGAS_YOY', name: '中国天然气产量同比', frequency: '月度' },
+
+    // 房地产：投资/施工/新开工/竣工/销售
+    { zb: 'A060101', id: 'CN_NBS_RE_INVEST', name: '中国房地产投资(累计)', frequency: '月度' },
+    { zb: 'A060102', id: 'CN_NBS_RE_INVEST_YOY', name: '中国房地产投资累计增速', frequency: '月度' },
+    { zb: 'A06010R', id: 'CN_NBS_RE_LAND_FEE', name: '中国房地产土地购置费(累计)', frequency: '月度' },
+    { zb: 'A06010S', id: 'CN_NBS_RE_LAND_FEE_YOY', name: '中国房地产土地购置费累计增速', frequency: '月度' },
+    { zb: 'A060401', id: 'CN_NBS_RE_CONSTRUCT_AREA', name: '中国房地产施工面积(累计)', frequency: '月度' },
+    { zb: 'A060402', id: 'CN_NBS_RE_CONSTRUCT_AREA_YOY', name: '中国房地产施工面积累计增速', frequency: '月度' },
+    { zb: 'A060403', id: 'CN_NBS_RE_STARTS_AREA', name: '中国房地产新开工面积(累计)', frequency: '月度' },
+    { zb: 'A060404', id: 'CN_NBS_RE_STARTS_AREA_YOY', name: '中国房地产新开工面积累计增速', frequency: '月度' },
+    { zb: 'A060405', id: 'CN_NBS_RE_COMPLETION_AREA', name: '中国房地产竣工面积(累计)', frequency: '月度' },
+    { zb: 'A060406', id: 'CN_NBS_RE_COMPLETION_AREA_YOY', name: '中国房地产竣工面积累计增速', frequency: '月度' },
+    { zb: 'A060801', id: 'CN_NBS_RE_SALES_AREA', name: '中国商品房销售面积(累计)', frequency: '月度' },
+    { zb: 'A060802', id: 'CN_NBS_RE_SALES_AREA_YOY', name: '中国商品房销售面积累计增速', frequency: '月度' },
+    { zb: 'A060901', id: 'CN_NBS_RE_SALES_VALUE', name: '中国商品房销售额(累计)', frequency: '月度' },
+    { zb: 'A060902', id: 'CN_NBS_RE_SALES_VALUE_YOY', name: '中国商品房销售额累计增速', frequency: '月度' },
+  ];
+
+  const results = await Promise.allSettled(
+    series.map((s) => fetchNbsLatest({ dbcode: 'hgyd', cn: 'NBS', zb: s.zb })),
+  );
+
+  for (let i = 0; i < series.length; i++) {
+    const def = series[i];
+    if (!def || existing.has(def.id)) continue;
+    const r = results[i];
+    if (r?.status !== 'fulfilled' || !r.value) continue;
+    const latest = r.value;
+
+    macro.push({
+      id: def.id,
+      name: def.name,
+      region: 'CN',
+      value: latest.value,
+      unit: latest.unit || '',
+      period: latest.period,
+      prev_value: latest.prev_value,
+      prev_period: latest.prev_period,
+      frequency: def.frequency,
+      history: [
+        { period: latest.period, value: latest.value },
+        ...(typeof latest.prev_value === 'number' && latest.prev_period
+          ? [{ period: latest.prev_period, value: latest.prev_value }]
+          : []),
+      ],
+    });
+    existing.add(def.id);
+  }
+};
 
 const DEMO_MACRO: MacroItem[] = [
   {
@@ -790,6 +876,12 @@ const getPublicEconomySummary = async (opts?: {
     });
   }
 
+  try {
+    await appendChinaNbsMacroExtras(macro);
+  } catch (err) {
+    console.error('NBS extra macro fetch failed', err);
+  }
+
   // China rates (SHIBOR / LPR / 10Y)
   try {
     const shibor = await fetchShiborLatest();
@@ -838,7 +930,40 @@ const getPublicEconomySummary = async (opts?: {
   }
 
   try {
-    const cn10 = await fetchChinaBond10yLatest();
+    const [cn3, cn5, cn10] = await Promise.all([
+      fetchChinaBondYieldLatest(3),
+      fetchChinaBondYieldLatest(5),
+      fetchChinaBondYieldLatest(10),
+    ]);
+
+    if (cn3 && typeof cn3.value === 'number') {
+      macro.push({
+        id: 'CN_3Y_YIELD',
+        name: '中国3年国债收益率',
+        region: 'CN',
+        value: cn3.value,
+        unit: '%',
+        period: cn3.period,
+        prev_value: cn3.prev_value,
+        prev_period: cn3.prev_period,
+        frequency: '日度',
+      });
+    }
+
+    if (cn5 && typeof cn5.value === 'number') {
+      macro.push({
+        id: 'CN_5Y_YIELD',
+        name: '中国5年国债收益率',
+        region: 'CN',
+        value: cn5.value,
+        unit: '%',
+        period: cn5.period,
+        prev_value: cn5.prev_value,
+        prev_period: cn5.prev_period,
+        frequency: '日度',
+      });
+    }
+
     if (cn10 && typeof cn10.value === 'number') {
       macro.push({
         id: 'CN_10Y_YIELD',
@@ -853,7 +978,7 @@ const getPublicEconomySummary = async (opts?: {
       });
     }
   } catch (err) {
-    console.error('ChinaBond 10Y fetch failed', err);
+    console.error('ChinaBond yield fetch failed', err);
   }
 
   if (ycLatest?.y10 !== undefined) {
@@ -869,8 +994,46 @@ const getPublicEconomySummary = async (opts?: {
       frequency: '日度',
       history: [
         { period: ycLatest.date, value: ycLatest.y10 },
-        ...(ycPrev?.y10 !== undefined
+        ...(ycPrev && ycPrev.y10 !== undefined
           ? [{ period: ycPrev.date, value: ycPrev.y10 }]
+          : []),
+      ],
+    });
+  }
+  if (ycLatest?.y5 !== undefined) {
+    macro.push({
+      id: 'US_5Y_YIELD',
+      name: '美国5年国债收益率',
+      region: 'US',
+      value: ycLatest.y5,
+      unit: '%',
+      period: ycLatest.date,
+      prev_value: ycPrev?.y5,
+      prev_period: ycPrev?.date,
+      frequency: '日度',
+      history: [
+        { period: ycLatest.date, value: ycLatest.y5 },
+        ...(ycPrev && ycPrev.y5 !== undefined
+          ? [{ period: ycPrev.date, value: ycPrev.y5 }]
+          : []),
+      ],
+    });
+  }
+  if (ycLatest?.y3 !== undefined) {
+    macro.push({
+      id: 'US_3Y_YIELD',
+      name: '美国3年国债收益率',
+      region: 'US',
+      value: ycLatest.y3,
+      unit: '%',
+      period: ycLatest.date,
+      prev_value: ycPrev?.y3,
+      prev_period: ycPrev?.date,
+      frequency: '日度',
+      history: [
+        { period: ycLatest.date, value: ycLatest.y3 },
+        ...(ycPrev && ycPrev.y3 !== undefined
+          ? [{ period: ycPrev.date, value: ycPrev.y3 }]
           : []),
       ],
     });
@@ -888,7 +1051,7 @@ const getPublicEconomySummary = async (opts?: {
       frequency: '日度',
       history: [
         { period: ycLatest.date, value: ycLatest.y2 },
-        ...(ycPrev?.y2 !== undefined
+        ...(ycPrev && ycPrev.y2 !== undefined
           ? [{ period: ycPrev.date, value: ycPrev.y2 }]
           : []),
       ],
@@ -1414,6 +1577,213 @@ export const GET = async () => {
         }
       } catch (err) {
         console.error('WorldBank macro fetch failed (tushare path)', err);
+      }
+
+      // 追加公共可用的宏观/产业/房地产（NBS）与利率/汇率数据，避免仅有少量示例项
+      try {
+        await appendChinaNbsMacroExtras(macro);
+      } catch (err) {
+        console.error('NBS extra macro fetch failed (tushare path)', err);
+      }
+
+      try {
+        const existing = new Set(macro.map((m) => m.id));
+        const [cn3, cn5, cn10] = await Promise.all([
+          fetchChinaBondYieldLatest(3),
+          fetchChinaBondYieldLatest(5),
+          fetchChinaBondYieldLatest(10),
+        ]);
+
+        if (cn3 && typeof cn3.value === 'number' && !existing.has('CN_3Y_YIELD')) {
+          macro.push({
+            id: 'CN_3Y_YIELD',
+            name: '中国3年国债收益率',
+            region: 'CN',
+            value: cn3.value,
+            unit: '%',
+            period: cn3.period,
+            prev_value: cn3.prev_value,
+            prev_period: cn3.prev_period,
+            frequency: '日度',
+          });
+        }
+        if (cn5 && typeof cn5.value === 'number' && !existing.has('CN_5Y_YIELD')) {
+          macro.push({
+            id: 'CN_5Y_YIELD',
+            name: '中国5年国债收益率',
+            region: 'CN',
+            value: cn5.value,
+            unit: '%',
+            period: cn5.period,
+            prev_value: cn5.prev_value,
+            prev_period: cn5.prev_period,
+            frequency: '日度',
+          });
+        }
+        if (
+          cn10 &&
+          typeof cn10.value === 'number' &&
+          !existing.has('CN_10Y_YIELD')
+        ) {
+          macro.push({
+            id: 'CN_10Y_YIELD',
+            name: '中国10年国债收益率',
+            region: 'CN',
+            value: cn10.value,
+            unit: '%',
+            period: cn10.period,
+            prev_value: cn10.prev_value,
+            prev_period: cn10.prev_period,
+            frequency: '日度',
+          });
+        }
+      } catch (err) {
+        console.error('ChinaBond yield fetch failed (tushare path)', err);
+      }
+
+      try {
+        const existing = new Set(macro.map((m) => m.id));
+        const { latest: ycLatest, prev: ycPrev } = await fetchTreasuryYieldCurveLatest();
+        if (ycLatest?.y10 !== undefined && !existing.has('US_10Y_YIELD')) {
+          macro.push({
+            id: 'US_10Y_YIELD',
+            name: '美国10年国债收益率',
+            region: 'US',
+            value: ycLatest.y10,
+            unit: '%',
+            period: ycLatest.date,
+            prev_value: ycPrev?.y10,
+            prev_period: ycPrev?.date,
+            frequency: '日度',
+          });
+        }
+        if (ycLatest?.y5 !== undefined && !existing.has('US_5Y_YIELD')) {
+          macro.push({
+            id: 'US_5Y_YIELD',
+            name: '美国5年国债收益率',
+            region: 'US',
+            value: ycLatest.y5,
+            unit: '%',
+            period: ycLatest.date,
+            prev_value: ycPrev?.y5,
+            prev_period: ycPrev?.date,
+            frequency: '日度',
+          });
+        }
+        if (ycLatest?.y3 !== undefined && !existing.has('US_3Y_YIELD')) {
+          macro.push({
+            id: 'US_3Y_YIELD',
+            name: '美国3年国债收益率',
+            region: 'US',
+            value: ycLatest.y3,
+            unit: '%',
+            period: ycLatest.date,
+            prev_value: ycPrev?.y3,
+            prev_period: ycPrev?.date,
+            frequency: '日度',
+          });
+        }
+      } catch (err) {
+        console.error('Treasury yield fetch failed (tushare path)', err);
+      }
+
+      try {
+        const existing = new Set(macro.map((m) => m.id));
+        const rates = await fetchErApiUsdLatest();
+        if (rates) {
+          const period = formatDateYYYYMMDDDashed(now);
+          if (typeof rates.CNY === 'number' && !existing.has('USD_CNY')) {
+            macro.push({
+              id: 'USD_CNY',
+              name: '美元/人民币',
+              region: 'FX',
+              value: rates.CNY,
+              unit: 'CNY',
+              period,
+              frequency: '日度',
+            });
+          }
+          if (typeof rates.JPY === 'number' && !existing.has('USD_JPY')) {
+            macro.push({
+              id: 'USD_JPY',
+              name: '美元/日元',
+              region: 'FX',
+              value: rates.JPY,
+              unit: 'JPY',
+              period,
+              frequency: '日度',
+            });
+          }
+          if (
+            typeof rates.EUR === 'number' &&
+            rates.EUR !== 0 &&
+            !existing.has('EUR_USD')
+          ) {
+            macro.push({
+              id: 'EUR_USD',
+              name: '欧元/美元',
+              region: 'FX',
+              value: 1 / rates.EUR,
+              unit: 'USD',
+              period,
+              frequency: '日度',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('FX fetch failed (tushare path)', err);
+      }
+
+      try {
+        const existing = new Set(macro.map((m) => m.id));
+        const rrp = await fetchFredLatest('RRPONTSYD');
+        if (rrp && typeof rrp.value === 'number' && !existing.has('US_RRP')) {
+          macro.push({
+            id: 'US_RRP',
+            name: '美联储隔夜逆回购(ON RRP)',
+            region: 'US',
+            value: rrp.value,
+            unit: '%',
+            period: rrp.period,
+            prev_value: rrp.prev_value,
+            prev_period: rrp.prev_period,
+            frequency: '日度',
+          });
+        }
+        const sofr = await fetchFredLatest('SOFR');
+        if (sofr && typeof sofr.value === 'number' && !existing.has('US_SOFR')) {
+          macro.push({
+            id: 'US_SOFR',
+            name: 'SOFR',
+            region: 'US',
+            value: sofr.value,
+            unit: '%',
+            period: sofr.period,
+            prev_value: sofr.prev_value,
+            prev_period: sofr.prev_period,
+            frequency: '日度',
+          });
+        }
+        const liborProxy = await fetchFredLatest('IR3TIB01USM156N');
+        if (
+          liborProxy &&
+          typeof liborProxy.value === 'number' &&
+          !existing.has('US_LIBOR_PROXY')
+        ) {
+          macro.push({
+            id: 'US_LIBOR_PROXY',
+            name: '美元3个月拆借利率(替代LIBOR)',
+            region: 'US',
+            value: liborProxy.value,
+            unit: '%',
+            period: liborProxy.period,
+            prev_value: liborProxy.prev_value,
+            prev_period: liborProxy.prev_period,
+            frequency: '月度',
+          });
+        }
+      } catch (err) {
+        console.error('FRED rates fetch failed (tushare path)', err);
       }
 
       macroUpdatedAt = Date.now();
