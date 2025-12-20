@@ -25,7 +25,7 @@ const Home = () => {
           <EconomyTicker />
         </div>
         {/* 中间聊天区域：在首页略收窄，为两侧滚屏腾出空间 */}
-        <div className="w-full lg:flex-1 min-w-0 order-1">
+        <div className="w-full lg:flex-1 min-w-0">
           <ChatWindow />
         </div>
         {/* 右侧新闻条：与左侧相同宽度 */}
@@ -34,7 +34,7 @@ const Home = () => {
         </div>
 
         {/* 移动端：只展示 3~5 条快照，避免顶端滚屏挤占输入框视野 */}
-        <div className="sm:hidden order-2 grid grid-cols-1 gap-[10px]">
+        <div className="sm:hidden grid grid-cols-1 gap-[10px]">
           <EconomyTickerCompact marketLimit={3} macroLimit={2} />
           <NewsTickerCompact limit={3} />
         </div>
