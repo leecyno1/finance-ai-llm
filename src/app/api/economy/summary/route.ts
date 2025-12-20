@@ -64,6 +64,7 @@ type EconomySummary = {
 };
 
 type EconomyCache = {
+  version?: number;
   updatedAt: number;
   marketUpdatedAt?: number;
   macroUpdatedAt?: number;
@@ -72,6 +73,7 @@ type EconomyCache = {
 
 const DATA_DIR = process.env.DATA_DIR || process.cwd();
 const ECONOMY_CACHE_PATH = path.join(DATA_DIR, '/data/economy-cache.json');
+const ECONOMY_CACHE_VERSION = 2;
 
 const formatDateYYYYMMDD = (date: Date) => {
   const y = date.getFullYear();
@@ -153,6 +155,7 @@ const loadCache = (): EconomyCache | null => {
     if (!raw.trim()) return null;
     const parsed = JSON.parse(raw) as EconomyCache;
     if (!parsed || typeof parsed.updatedAt !== 'number') return null;
+    if ((parsed.version ?? 0) !== ECONOMY_CACHE_VERSION) return null;
     return parsed;
   } catch (err) {
     console.error('Failed to read economy cache file:', err);
@@ -166,7 +169,10 @@ const saveCache = (cache: EconomyCache) => {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(ECONOMY_CACHE_PATH, JSON.stringify(cache, null, 2));
+    fs.writeFileSync(
+      ECONOMY_CACHE_PATH,
+      JSON.stringify({ ...cache, version: ECONOMY_CACHE_VERSION }, null, 2),
+    );
   } catch (err) {
     console.error('Failed to write economy cache file:', err);
   }
