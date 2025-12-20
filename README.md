@@ -77,8 +77,8 @@ docker build -t finance-ai-llm:latest --build-arg NODE_IMAGE=dockerproxy.com/lib
 - SearXNG（搜索 / RAG 检索）
 - Docker
 
-## 致谢（Acknowledgements）
-本项目基于 Perplexica 的工程结构进行二次开发与定制。
+## 开源许可与致谢（License & Attribution）
+本项目遵循 MIT License，并保留原始版权声明与许可文本，详见 `LICENSE`。
 
 ## License
 MIT

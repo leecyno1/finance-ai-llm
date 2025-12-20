@@ -27,7 +27,7 @@ else
 fi
 
 cd /home/perplexica
-echo "Starting Perplexica..."
+echo "Starting Dr.Lemon..."
 
 if [ "${CACHE_WORKER_ENABLED:-true}" != "false" ]; then
   echo "Starting cache worker..."

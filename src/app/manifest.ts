@@ -2,10 +2,10 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Perplexica - Chat with the internet',
-    short_name: 'Perplexica',
+    name: 'Dr.Lemon · AI金融研究',
+    short_name: 'Dr.Lemon',
     description:
-      'Perplexica is an AI powered chatbot that is connected to the internet.',
+      'Dr.Lemon 是面向金融投研的 AI 助手：支持联网检索、财经快讯与宏观数据。',
     start_url: '/',
     display: 'standalone',
     background_color: '#0a0a0a',

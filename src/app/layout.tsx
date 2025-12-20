@@ -17,9 +17,8 @@ const montserrat = Montserrat({
 });
 
 export const metadata: Metadata = {
-  title: 'Perplexica - Chat with the internet',
-  description:
-    'Perplexica is an AI powered chatbot that is connected to the internet.',
+  title: 'Dr.Lemon · AI金融研究',
+  description: 'Dr.Lemon 是面向金融投研的 AI 助手：支持联网检索、财经快讯与宏观数据。',
 };
 
 export default function RootLayout({
@@ -28,7 +27,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html className="h-full" lang="en" suppressHydrationWarning>
+    <html className="h-full" lang="zh" suppressHydrationWarning>
       <body className={cn('h-full', montserrat.className)}>
         <ThemeProvider>
           <ChatProvider>

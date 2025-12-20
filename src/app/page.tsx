@@ -7,8 +7,8 @@ import DrLemonBrand from '@/components/DrLemonBrand';
 import { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Chat - Perplexica',
-  description: 'Chat with the internet, chat with Perplexica.',
+  title: 'Dr.Lemon · AI金融研究',
+  description: 'Dr.Lemon 是面向金融投研的 AI 助手：支持联网检索、财经快讯与宏观数据。',
 };
 
 const Home = () => {
