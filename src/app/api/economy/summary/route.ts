@@ -1164,7 +1164,25 @@ const getPublicEconomySummary = async (opts?: {
 
 export const GET = async () => {
   if (!hasTushareToken()) {
+    // Public 模式也走磁盘缓存：避免首页/经济页每次都等待多源请求完成
+    const cached = loadCache();
+    const MARKET_TTL_MS = 10 * 60 * 1000;
+
+    const cachedUpdatedAt = cached?.updatedAt ?? 0;
+    const cachedIsPublic =
+      cached?.data?.source === 'public' || cached?.data?.reason === 'missing_token';
+
+    if (cached && cachedIsPublic && Date.now() - cachedUpdatedAt < MARKET_TTL_MS) {
+      return Response.json(cached.data);
+    }
+
     const summary = await getPublicEconomySummary({ reason: 'missing_token' });
+    saveCache({
+      updatedAt: Date.now(),
+      marketUpdatedAt: Date.now(),
+      macroUpdatedAt: Date.now(),
+      data: summary,
+    });
     return Response.json(summary);
   }
 

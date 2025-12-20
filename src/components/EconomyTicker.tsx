@@ -43,6 +43,7 @@ type TickerItem = {
 const ROW_HEIGHT = 56; // keep in sync with h-14
 const INTERVAL_MS = 5000;
 const REFRESH_MS = 10 * 60 * 1000; // 每 10 分钟重新拉取一次数据
+const STORAGE_KEY = 'economyTickerCache:v1';
 
 const EconomyTicker = () => {
   const [baseItems, setBaseItems] = useState<TickerItem[]>([]);
@@ -102,10 +103,30 @@ const EconomyTicker = () => {
         if (!active) return;
         setBaseItems(combined);
         setOffset(0);
+
+        try {
+          localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({ updatedAt: Date.now(), items: combined }),
+          );
+        } catch {}
       } catch (err) {
         console.error('Failed to load economy summary for ticker', err);
       }
     };
+
+    // 先从本地缓存恢复：避免首屏“加载中”停留过久
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as any;
+        const items = Array.isArray(parsed?.items) ? (parsed.items as TickerItem[]) : [];
+        if (items.length) {
+          setBaseItems(items);
+          setOffset(0);
+        }
+      }
+    } catch {}
 
     fetchSummary();
     const id = setInterval(fetchSummary, REFRESH_MS);
