@@ -93,10 +93,10 @@ const EconomyTicker = () => {
 
         let combined = [...marketItems, ...macroItems];
 
-        // 确保基础数据不少于 100 条，不足则循环填充
+        // 确保基础数据不少于 200 条，不足则循环填充
         const baseLen = combined.length;
-        while (combined.length < 100 && baseLen > 0) {
-          const needed = Math.min(baseLen, 100 - combined.length);
+        while (combined.length < 200 && baseLen > 0) {
+          const needed = Math.min(baseLen, 200 - combined.length);
           combined = combined.concat(combined.slice(0, needed));
         }
 

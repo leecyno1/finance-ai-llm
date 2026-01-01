@@ -138,6 +138,60 @@ export const fetchWorldBankIndicatorLatest = async (
   }, 12_000);
 };
 
+export const fetchWorldBankIndicatorLatestMulti = async (
+  countries: string[], // e.g. ["USA","CHN","JPN","EMU","WLD"]
+  indicator: string, // e.g. NY.GDP.MKTP.CD
+  opts?: { fromYear?: number; toYear?: number },
+): Promise<Record<string, { latest?: WorldBankObs; prev?: WorldBankObs }>> => {
+  if (!countries.length) return {};
+
+  const joined = countries.map((c) => encodeURIComponent(c)).join(';');
+  const url = new URL(
+    `https://api.worldbank.org/v2/country/${joined}/indicator/${encodeURIComponent(
+      indicator,
+    )}`,
+  );
+  url.searchParams.set('format', 'json');
+  // When multiple countries are requested, keep only recent years to ensure all countries appear in the response.
+  if (opts?.fromYear && opts?.toYear) {
+    url.searchParams.set('date', `${opts.fromYear}:${opts.toYear}`);
+  }
+  url.searchParams.set('per_page', '200');
+
+  return withTimeout(async (signal) => {
+    const res = await fetch(url, { cache: 'no-store', signal });
+    if (!res.ok) throw new Error(`WorldBank HTTP error: ${res.status}`);
+    const json = (await res.json()) as any;
+    const data = Array.isArray(json) ? json[1] : null;
+    if (!Array.isArray(data)) return {};
+
+    const grouped = new Map<string, WorldBankObs[]>();
+    for (const row of data) {
+      const countryId = String(row?.country?.id ?? '').trim();
+      const year = String(row?.date ?? '').trim();
+      const value =
+        typeof row?.value === 'number' ? (row.value as number) : Number.NaN;
+      if (!countryId) continue;
+      const y = Number(year);
+      if (!Number.isFinite(y) || y <= 1900) continue;
+      if (!Number.isFinite(value)) continue;
+      const list = grouped.get(countryId) ?? [];
+      list.push({ date: year, value });
+      grouped.set(countryId, list);
+    }
+
+    const out: Record<string, { latest?: WorldBankObs; prev?: WorldBankObs }> =
+      {};
+    for (const [countryId, rows] of grouped.entries()) {
+      rows.sort((a, b) => Number(b.date) - Number(a.date));
+      if (!rows.length) continue;
+      out[countryId] = { latest: rows[0], prev: rows[1] };
+    }
+
+    return out;
+  }, 8_000);
+};
+
 export const fetchTencentKlineDaily = async (
   code: string, // e.g. sh000001
   days: number,
@@ -164,6 +218,85 @@ export const fetchTencentKlineDaily = async (
       rows[i].pct_chg = prev ? ((rows[i].close - prev) / prev) * 100 : 0;
     }
     return rows;
+  }, 12_000);
+};
+
+export type SinaFuturesQuote = {
+  code: string;
+  name: string;
+  date?: string; // YYYY-MM-DD
+  time?: string; // HH:MM:SS
+  price: number;
+  prev_settle?: number;
+  open?: number;
+  high?: number;
+  low?: number;
+};
+
+export const fetchSinaFuturesQuotes = async (
+  codes: string[], // e.g. ["hf_CL","hf_OIL"]
+): Promise<Record<string, SinaFuturesQuote>> => {
+  const cleaned = codes.map((c) => c.trim()).filter(Boolean);
+  if (!cleaned.length) return {};
+
+  const url = `https://hq.sinajs.cn/list=${cleaned.join(',')}`;
+
+  return withTimeout(async (signal) => {
+    const res = await fetch(url, {
+      cache: 'no-store',
+      signal,
+      headers: {
+        Referer: 'https://finance.sina.com.cn/',
+        'User-Agent': 'Mozilla/5.0',
+      },
+    });
+    if (!res.ok) throw new Error(`Sina futures HTTP error: ${res.status}`);
+    const raw = await res.arrayBuffer();
+    let text = '';
+    try {
+      // Sina quotes are commonly encoded in GBK/GB18030.
+      text = new TextDecoder('gb18030').decode(raw);
+    } catch {
+      text = new TextDecoder().decode(raw);
+    }
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+    const out: Record<string, SinaFuturesQuote> = {};
+    const re = /^var\s+hq_str_([^=]+)=\"([^\"]*)\";/;
+
+    for (const line of lines) {
+      const m = line.match(re);
+      if (!m) continue;
+      const code = String(m[1] ?? '').trim();
+      const payload = String(m[2] ?? '');
+      if (!code || !payload) continue;
+
+      const parts = payload.split(',');
+      const price = Number(parts[0]);
+      if (!Number.isFinite(price)) continue;
+
+      const high = Number(parts[4]);
+      const low = Number(parts[5]);
+      const time = String(parts[6] ?? '').trim();
+      const open = Number(parts[7]);
+      const prevSettle = Number(parts[8]);
+      const date = String(parts[12] ?? '').trim();
+      const name = String(parts[13] ?? '').trim() || code;
+
+      out[code] = {
+        code,
+        name,
+        date: date || undefined,
+        time: time || undefined,
+        price,
+        prev_settle: Number.isFinite(prevSettle) ? prevSettle : undefined,
+        open: Number.isFinite(open) ? open : undefined,
+        high: Number.isFinite(high) ? high : undefined,
+        low: Number.isFinite(low) ? low : undefined,
+      };
+    }
+
+    return out;
   }, 12_000);
 };
 

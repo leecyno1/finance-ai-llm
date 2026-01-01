@@ -107,7 +107,7 @@ const warmEconomy = async (reason) => {
   state.inFlightEconomy = true;
   const startedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(`${baseUrl}/api/economy/summary`, 35_000);
+    const res = await fetchWithTimeout(`${baseUrl}/api/economy/summary`, 60_000);
     const text = await res.text();
     console.log(
       `[cache-worker] economy ${reason} -> ${res.status} (${Date.now() - startedAt}ms)`,

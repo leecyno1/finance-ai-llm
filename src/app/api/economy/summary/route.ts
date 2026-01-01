@@ -5,7 +5,7 @@ import {
   fetchStooqDaily,
   fetchTencentKlineDaily,
   fetchCboeVixDaily,
-  fetchWorldBankIndicatorLatest,
+  fetchWorldBankIndicatorLatestMulti,
   fetchErApiUsdLatest,
   fetchFredLatest,
   fetchLprLatest,
@@ -13,6 +13,7 @@ import {
   fetchShiborLatest,
   fetchChinaBondYieldLatest,
   fetchTreasuryYieldCurveLatest,
+  fetchSinaFuturesQuotes,
 } from '@/lib/economy/public';
 
 type MarketHistoryPoint = {
@@ -73,7 +74,7 @@ type EconomyCache = {
 
 const DATA_DIR = process.env.DATA_DIR || process.cwd();
 const ECONOMY_CACHE_PATH = path.join(DATA_DIR, '/data/economy-cache.json');
-const ECONOMY_CACHE_VERSION = 2;
+const ECONOMY_CACHE_VERSION = 4;
 
 const formatDateYYYYMMDD = (date: Date) => {
   const y = date.getFullYear();
@@ -486,136 +487,393 @@ type WorldBankIndicatorDef = {
 const fetchWorldBankMacroItems = async (): Promise<
   (MacroItem & { history?: MacroHistoryPoint[] })[]
 > => {
-  const buildWbConfigs = (
-    label: string,
-    region: string,
-    country: string,
-    defs: WorldBankIndicatorDef[],
-  ): WorldBankIndicatorConfig[] =>
-    defs.map((d) => ({
-      id: `WB_${region}_${d.key}`,
-      name: `${label}${d.name}`,
-      region,
-      country,
-      indicator: d.indicator,
-      unit: d.unit,
-      frequency: d.frequency,
-      scale: d.scale,
-    }));
+  // World Bank API (public): use multi-country requests per indicator to keep the request count low.
+  const countries = [
+    { label: '美国', region: 'US', code: 'USA', wbId: 'US' },
+    { label: '中国', region: 'CN', code: 'CHN', wbId: 'CN' },
+    { label: '日本', region: 'JP', code: 'JPN', wbId: 'JP' },
+    { label: '欧元区', region: 'EU', code: 'EMU', wbId: 'XC' },
+    { label: '全球', region: 'WLD', code: 'WLD', wbId: '1W' },
+  ] as const;
 
-  const countryDefs: WorldBankIndicatorDef[] = [
-    { key: 'GDP_CURRENT', name: 'GDP(现价)', indicator: 'NY.GDP.MKTP.CD', unit: '万亿美元', frequency: '年度', scale: 1e12 },
-    { key: 'GDP_GROWTH', name: 'GDP增速', indicator: 'NY.GDP.MKTP.KD.ZG', unit: '%', frequency: '年度' },
-    { key: 'GDP_PER_CAPITA', name: '人均GDP', indicator: 'NY.GDP.PCAP.CD', unit: '千美元', frequency: '年度', scale: 1e3 },
-    { key: 'GDP_PC_GROWTH', name: '人均GDP增速', indicator: 'NY.GDP.PCAP.KD.ZG', unit: '%', frequency: '年度' },
-    { key: 'GDP_DEFLATOR', name: 'GDP平减指数(通胀)', indicator: 'NY.GDP.DEFL.KD.ZG', unit: '%', frequency: '年度' },
-    { key: 'CPI_INFLATION', name: '通胀(CPI)', indicator: 'FP.CPI.TOTL.ZG', unit: '%', frequency: '年度' },
-    { key: 'UNEMPLOY', name: '失业率', indicator: 'SL.UEM.TOTL.ZS', unit: '%', frequency: '年度' },
-    { key: 'LABOR_PART', name: '劳参率', indicator: 'SL.TLF.CACT.ZS', unit: '%', frequency: '年度' },
-    { key: 'EMPLOY_RATIO', name: '就业人口比', indicator: 'SL.EMP.TOTL.SP.ZS', unit: '%', frequency: '年度' },
-    { key: 'POP', name: '人口', indicator: 'SP.POP.TOTL', unit: '亿人', frequency: '年度', scale: 1e8 },
-    { key: 'POP_GROWTH', name: '人口增速', indicator: 'SP.POP.GROW', unit: '%', frequency: '年度' },
-    { key: 'LIFE_EXPECT', name: '预期寿命', indicator: 'SP.DYN.LE00.IN', unit: '岁', frequency: '年度' },
-    { key: 'URBAN_RATE', name: '城镇化率', indicator: 'SP.URB.TOTL.IN.ZS', unit: '%', frequency: '年度' },
-    { key: 'DEBT_GDP', name: '政府债务/ GDP', indicator: 'GC.DOD.TOTL.GD.ZS', unit: '%', frequency: '年度' },
-    { key: 'TAX_GDP', name: '税收/ GDP', indicator: 'GC.TAX.TOTL.GD.ZS', unit: '%', frequency: '年度' },
-    { key: 'EXPENSE_GDP', name: '政府支出/ GDP', indicator: 'GC.XPN.TOTL.GD.ZS', unit: '%', frequency: '年度' },
-    { key: 'SAVINGS_GDP', name: '总储蓄/ GDP', indicator: 'NY.GNS.ICTR.ZS', unit: '%', frequency: '年度' },
-    { key: 'CAPITAL_FORM_GDP', name: '资本形成/ GDP', indicator: 'NE.GDI.FTOT.ZS', unit: '%', frequency: '年度' },
-    { key: 'TRADE_GDP', name: '贸易额/ GDP', indicator: 'NE.TRD.GNFS.ZS', unit: '%', frequency: '年度' },
-    { key: 'EXPORT_GDP', name: '出口/ GDP', indicator: 'NE.EXP.GNFS.ZS', unit: '%', frequency: '年度' },
-    { key: 'IMPORT_GDP', name: '进口/ GDP', indicator: 'NE.IMP.GNFS.ZS', unit: '%', frequency: '年度' },
-    { key: 'EXPORT_USD', name: '出口额', indicator: 'NE.EXP.GNFS.CD', unit: '十亿美元', frequency: '年度', scale: 1e9 },
-    { key: 'IMPORT_USD', name: '进口额', indicator: 'NE.IMP.GNFS.CD', unit: '十亿美元', frequency: '年度', scale: 1e9 },
-    { key: 'EXPORT_GROWTH', name: '出口增速(量)', indicator: 'NE.EXP.GNFS.KD.ZG', unit: '%', frequency: '年度' },
-    { key: 'IMPORT_GROWTH', name: '进口增速(量)', indicator: 'NE.IMP.GNFS.KD.ZG', unit: '%', frequency: '年度' },
-    { key: 'FDI_IN_GDP', name: 'FDI净流入/ GDP', indicator: 'BX.KLT.DINV.WD.GD.ZS', unit: '%', frequency: '年度' },
-    { key: 'FDI_OUT_GDP', name: 'FDI净流出/ GDP', indicator: 'BM.KLT.DINV.WD.GD.ZS', unit: '%', frequency: '年度' },
-    { key: 'RESERVES_USD', name: '外汇储备(含黄金)', indicator: 'FI.RES.TOTL.CD', unit: '亿美元', frequency: '年度', scale: 1e8 },
-    { key: 'RESERVES_MONTHS', name: '外汇储备(月进口)', indicator: 'FI.RES.XGLD.MO', unit: '月', frequency: '年度' },
-    { key: 'CA_USD', name: '经常账户余额', indicator: 'BN.CAB.XOKA.CD', unit: '亿美元', frequency: '年度', scale: 1e8 },
-    { key: 'CA_GDP', name: '经常账户/ GDP', indicator: 'BN.CAB.XOKA.GD.ZS', unit: '%', frequency: '年度' },
-    { key: 'CREDIT_PRIVATE_GDP', name: '私营部门信贷/ GDP', indicator: 'FS.AST.PRVT.GD.ZS', unit: '%', frequency: '年度' },
-    { key: 'CREDIT_FIN_GDP', name: '金融部门信贷/ GDP', indicator: 'FS.AST.DOMS.GD.ZS', unit: '%', frequency: '年度' },
-    { key: 'MONEY_GDP', name: '广义货币/ GDP', indicator: 'FM.LBL.BMNY.GD.ZS', unit: '%', frequency: '年度' },
-    { key: 'REAL_RATE', name: '实际利率', indicator: 'FR.INR.RINR', unit: '%', frequency: '年度' },
-    { key: 'LEND_RATE', name: '贷款利率', indicator: 'FR.INR.LEND', unit: '%', frequency: '年度' },
-    { key: 'DEPOSIT_RATE', name: '存款利率', indicator: 'FR.INR.DPST', unit: '%', frequency: '年度' },
-    { key: 'FX_RATE', name: '官方汇率(本币/美元)', indicator: 'PA.NUS.FCRF', unit: '本币/美元', frequency: '年度' },
-    { key: 'AGRI_SHARE', name: '农业占比', indicator: 'NV.AGR.TOTL.ZS', unit: '%', frequency: '年度' },
-    { key: 'INDUSTRY_SHARE', name: '工业占比', indicator: 'NV.IND.TOTL.ZS', unit: '%', frequency: '年度' },
-    { key: 'MANUF_SHARE', name: '制造业占比', indicator: 'NV.IND.MANF.ZS', unit: '%', frequency: '年度' },
-    { key: 'SERVICES_SHARE', name: '服务业占比', indicator: 'NV.SRV.TETC.ZS', unit: '%', frequency: '年度' },
+  const defs: WorldBankIndicatorDef[] = [
+    // 宏观：国民账户/增长
+    { key: 'GDP_CURRENT', name: '宏观·GDP(现价)', indicator: 'NY.GDP.MKTP.CD', unit: '万亿美元', frequency: '年度', scale: 1e12 },
+    { key: 'GDP_CONST', name: '宏观·GDP(不变价)', indicator: 'NY.GDP.MKTP.KD', unit: '万亿美元(2015价)', frequency: '年度', scale: 1e12 },
+    { key: 'GDP_GROWTH', name: '宏观·GDP增速', indicator: 'NY.GDP.MKTP.KD.ZG', unit: '%', frequency: '年度' },
+    { key: 'GDP_PER_CAPITA', name: '宏观·人均GDP', indicator: 'NY.GDP.PCAP.CD', unit: '千美元', frequency: '年度', scale: 1e3 },
+    { key: 'GDP_PC_GROWTH', name: '宏观·人均GDP增速', indicator: 'NY.GDP.PCAP.KD.ZG', unit: '%', frequency: '年度' },
+    { key: 'GDP_DEFLATOR', name: '价格·GDP平减指数(通胀)', indicator: 'NY.GDP.DEFL.KD.ZG', unit: '%', frequency: '年度' },
+
+    // 价格/就业/人口
+    { key: 'CPI_INFLATION', name: '价格·通胀(CPI)', indicator: 'FP.CPI.TOTL.ZG', unit: '%', frequency: '年度' },
+    { key: 'UNEMPLOY', name: '就业·失业率', indicator: 'SL.UEM.TOTL.ZS', unit: '%', frequency: '年度' },
+    { key: 'LABOR_PART', name: '就业·劳参率', indicator: 'SL.TLF.CACT.ZS', unit: '%', frequency: '年度' },
+    { key: 'EMPLOY_RATIO', name: '就业·就业人口比', indicator: 'SL.EMP.TOTL.SP.ZS', unit: '%', frequency: '年度' },
+    { key: 'POP', name: '人口·人口总量', indicator: 'SP.POP.TOTL', unit: '亿人', frequency: '年度', scale: 1e8 },
+    { key: 'POP_GROWTH', name: '人口·人口增速', indicator: 'SP.POP.GROW', unit: '%', frequency: '年度' },
+    { key: 'URBAN_RATE', name: '人口·城镇化率', indicator: 'SP.URB.TOTL.IN.ZS', unit: '%', frequency: '年度' },
+    { key: 'LIFE_EXPECT', name: '人口·预期寿命', indicator: 'SP.DYN.LE00.IN', unit: '岁', frequency: '年度' },
+    { key: 'FERTILITY', name: '人口·总和生育率', indicator: 'SP.DYN.TFRT.IN', unit: '', frequency: '年度' },
+
+    // 消费/投资
+    { key: 'CONS_TOTAL_GDP', name: '消费·最终消费/GDP', indicator: 'NE.CON.TOTL.ZS', unit: '%', frequency: '年度' },
+    { key: 'CONS_PRIVATE_GDP', name: '消费·居民消费/GDP', indicator: 'NE.CON.PRVT.ZS', unit: '%', frequency: '年度' },
+    { key: 'CONS_GOV_GDP', name: '财政·政府消费/GDP', indicator: 'NE.CON.GOVT.ZS', unit: '%', frequency: '年度' },
+    { key: 'INVEST_GDP', name: '投资·资本形成/GDP', indicator: 'NE.GDI.FTOT.ZS', unit: '%', frequency: '年度' },
+
+    // 外贸/外部平衡
+    { key: 'TRADE_GDP', name: '外部·贸易额/GDP', indicator: 'NE.TRD.GNFS.ZS', unit: '%', frequency: '年度' },
+    { key: 'EXPORT_GDP', name: '外部·出口/GDP', indicator: 'NE.EXP.GNFS.ZS', unit: '%', frequency: '年度' },
+    { key: 'IMPORT_GDP', name: '外部·进口/GDP', indicator: 'NE.IMP.GNFS.ZS', unit: '%', frequency: '年度' },
+    { key: 'EXPORT_USD', name: '外部·出口额', indicator: 'NE.EXP.GNFS.CD', unit: '十亿美元', frequency: '年度', scale: 1e9 },
+    { key: 'IMPORT_USD', name: '外部·进口额', indicator: 'NE.IMP.GNFS.CD', unit: '十亿美元', frequency: '年度', scale: 1e9 },
+    { key: 'CA_GDP', name: '外部·经常账户/GDP', indicator: 'BN.CAB.XOKA.GD.ZS', unit: '%', frequency: '年度' },
+    { key: 'CA_USD', name: '外部·经常账户余额', indicator: 'BN.CAB.XOKA.CD', unit: '亿美元', frequency: '年度', scale: 1e8 },
+    { key: 'FDI_IN_GDP', name: '外部·FDI净流入/GDP', indicator: 'BX.KLT.DINV.WD.GD.ZS', unit: '%', frequency: '年度' },
+    { key: 'FDI_OUT_GDP', name: '外部·FDI净流出/GDP', indicator: 'BM.KLT.DINV.WD.GD.ZS', unit: '%', frequency: '年度' },
+    { key: 'RESERVES_USD', name: '外部·外汇储备(含黄金)', indicator: 'FI.RES.TOTL.CD', unit: '亿美元', frequency: '年度', scale: 1e8 },
+    { key: 'RESERVES_MONTHS', name: '外部·外储(月进口)', indicator: 'FI.RES.XGLD.MO', unit: '月', frequency: '年度' },
+
+    // 金融/利率/货币
+    { key: 'CREDIT_PRIVATE_GDP', name: '金融·私营部门信贷/GDP', indicator: 'FS.AST.PRVT.GD.ZS', unit: '%', frequency: '年度' },
+    { key: 'CREDIT_FIN_GDP', name: '金融·金融部门信贷/GDP', indicator: 'FS.AST.DOMS.GD.ZS', unit: '%', frequency: '年度' },
+    { key: 'MONEY_GDP', name: '金融·广义货币/GDP', indicator: 'FM.LBL.BMNY.GD.ZS', unit: '%', frequency: '年度' },
+    { key: 'REAL_RATE', name: '利率·实际利率', indicator: 'FR.INR.RINR', unit: '%', frequency: '年度' },
+    { key: 'LEND_RATE', name: '利率·贷款利率', indicator: 'FR.INR.LEND', unit: '%', frequency: '年度' },
+    { key: 'DEPOSIT_RATE', name: '利率·存款利率', indicator: 'FR.INR.DPST', unit: '%', frequency: '年度' },
+    { key: 'FX_RATE', name: '汇率·官方汇率(本币/美元)', indicator: 'PA.NUS.FCRF', unit: '本币/美元', frequency: '年度' },
+
+    // 财政
+    { key: 'DEBT_GDP', name: '财政·政府债务/GDP', indicator: 'GC.DOD.TOTL.GD.ZS', unit: '%', frequency: '年度' },
+    { key: 'TAX_GDP', name: '财政·税收/GDP', indicator: 'GC.TAX.TOTL.GD.ZS', unit: '%', frequency: '年度' },
+    { key: 'EXPENSE_GDP', name: '财政·政府支出/GDP', indicator: 'GC.XPN.TOTL.GD.ZS', unit: '%', frequency: '年度' },
+    { key: 'BALANCE_GDP', name: '财政·财政收支(现金口径)/GDP', indicator: 'GC.BAL.CASH.GD.ZS', unit: '%', frequency: '年度' },
+    { key: 'INTPAY_REV', name: '财政·利息支出/收入', indicator: 'GC.XPN.INTP.RV.ZS', unit: '%', frequency: '年度' },
+    { key: 'MIL_GDP', name: '财政·军费/GDP', indicator: 'MS.MIL.XPND.GD.ZS', unit: '%', frequency: '年度' },
+
+    // 产业/工业结构
+    { key: 'AGRI_SHARE', name: '产业·农业占比', indicator: 'NV.AGR.TOTL.ZS', unit: '%', frequency: '年度' },
+    { key: 'INDUSTRY_SHARE', name: '产业·工业占比', indicator: 'NV.IND.TOTL.ZS', unit: '%', frequency: '年度' },
+    { key: 'MANUF_SHARE', name: '产业·制造业占比', indicator: 'NV.IND.MANF.ZS', unit: '%', frequency: '年度' },
+    { key: 'SERVICES_SHARE', name: '产业·服务业占比', indicator: 'NV.SRV.TETC.ZS', unit: '%', frequency: '年度' },
+    { key: 'AGRI_VA', name: '产业·农业增加值(不变价)', indicator: 'NV.AGR.TOTL.KD', unit: '万亿美元(2015价)', frequency: '年度', scale: 1e12 },
+    { key: 'IND_VA', name: '产业·工业增加值(不变价)', indicator: 'NV.IND.TOTL.KD', unit: '万亿美元(2015价)', frequency: '年度', scale: 1e12 },
+    { key: 'MANUF_VA', name: '产业·制造业增加值(不变价)', indicator: 'NV.IND.MANF.KD', unit: '万亿美元(2015价)', frequency: '年度', scale: 1e12 },
+
+    // 能源/环境/资源
+    { key: 'ENERGY_USE', name: '能源·能源使用(kgOE/人)', indicator: 'EG.USE.PCAP.KG.OE', unit: 'kgOE/人', frequency: '年度' },
+    { key: 'ELEC_USE', name: '能源·用电量(kWh/人)', indicator: 'EG.USE.ELEC.KH.PC', unit: 'kWh/人', frequency: '年度' },
+    { key: 'ELEC_ACCESS', name: '能源·电力可及率', indicator: 'EG.ELC.ACCS.ZS', unit: '%', frequency: '年度' },
+    { key: 'RENEW_SHARE', name: '能源·可再生能源占比', indicator: 'EG.FEC.RNEW.ZS', unit: '%', frequency: '年度' },
+    { key: 'CO2_PC', name: '环境·CO₂排放(吨/人)', indicator: 'EN.ATM.CO2E.PC', unit: '吨/人', frequency: '年度' },
+    { key: 'CO2_KT', name: '环境·CO₂排放(kt)', indicator: 'EN.ATM.CO2E.KT', unit: '百万吨', frequency: '年度', scale: 1e6 },
+    { key: 'OIL_RENTS', name: '资源·石油租金/GDP', indicator: 'NY.GDP.PETR.RT.ZS', unit: '%', frequency: '年度' },
+    { key: 'GAS_RENTS', name: '资源·天然气租金/GDP', indicator: 'NY.GDP.NGAS.RT.ZS', unit: '%', frequency: '年度' },
+    { key: 'COAL_RENTS', name: '资源·煤炭租金/GDP', indicator: 'NY.GDP.COAL.RT.ZS', unit: '%', frequency: '年度' },
+    { key: 'TOTL_RENTS', name: '资源·自然资源租金/GDP', indicator: 'NY.GDP.TOTL.RT.ZS', unit: '%', frequency: '年度' },
+
+    // 民生/分配
+    { key: 'GINI', name: '民生·基尼系数', indicator: 'SI.POV.GINI', unit: '', frequency: '年度' },
   ];
 
-  const worldDefs: WorldBankIndicatorDef[] = [
-    { key: 'GDP_CURRENT', name: 'GDP(现价)', indicator: 'NY.GDP.MKTP.CD', unit: '万亿美元', frequency: '年度', scale: 1e12 },
-    { key: 'GDP_GROWTH', name: 'GDP增速', indicator: 'NY.GDP.MKTP.KD.ZG', unit: '%', frequency: '年度' },
-    { key: 'GDP_PER_CAPITA', name: '人均GDP', indicator: 'NY.GDP.PCAP.CD', unit: '千美元', frequency: '年度', scale: 1e3 },
-    { key: 'GDP_PC_GROWTH', name: '人均GDP增速', indicator: 'NY.GDP.PCAP.KD.ZG', unit: '%', frequency: '年度' },
-    { key: 'GDP_DEFLATOR', name: 'GDP平减指数(通胀)', indicator: 'NY.GDP.DEFL.KD.ZG', unit: '%', frequency: '年度' },
-    { key: 'CPI_INFLATION', name: '通胀(CPI)', indicator: 'FP.CPI.TOTL.ZG', unit: '%', frequency: '年度' },
-    { key: 'POP', name: '人口', indicator: 'SP.POP.TOTL', unit: '亿人', frequency: '年度', scale: 1e8 },
-    { key: 'POP_GROWTH', name: '人口增速', indicator: 'SP.POP.GROW', unit: '%', frequency: '年度' },
-    { key: 'TRADE_GDP', name: '贸易额/ GDP', indicator: 'NE.TRD.GNFS.ZS', unit: '%', frequency: '年度' },
-    { key: 'FDI_IN_GDP', name: 'FDI净流入/ GDP', indicator: 'BX.KLT.DINV.WD.GD.ZS', unit: '%', frequency: '年度' },
-    { key: 'SAVINGS_GDP', name: '总储蓄/ GDP', indicator: 'NY.GNS.ICTR.ZS', unit: '%', frequency: '年度' },
-    { key: 'CAPITAL_FORM_GDP', name: '资本形成/ GDP', indicator: 'NE.GDI.FTOT.ZS', unit: '%', frequency: '年度' },
-  ];
+  const nowYear = new Date().getFullYear();
+  const fromYear = nowYear - 8;
+  const codes = countries.map((c) => c.code) as string[];
 
-  const configs: WorldBankIndicatorConfig[] = [
-    ...buildWbConfigs('美国', 'US', 'USA', countryDefs),
-    ...buildWbConfigs('中国', 'CN', 'CHN', countryDefs),
-    ...buildWbConfigs('日本', 'JP', 'JPN', countryDefs),
-    ...buildWbConfigs('欧元区', 'EU', 'EMU', countryDefs),
-    ...buildWbConfigs('全球', 'WLD', 'WLD', worldDefs),
-  ];
-
-  const concurrency = 8;
+  const concurrency = 10;
   const out: (MacroItem & { history?: MacroHistoryPoint[] })[] = [];
   let cursor = 0;
 
   const workers = Array.from({ length: concurrency }).map(async () => {
-    while (cursor < configs.length) {
-      const cfg = configs[cursor];
+    while (cursor < defs.length) {
+      const def = defs[cursor];
       cursor += 1;
-      if (!cfg) continue;
-
+      if (!def) continue;
       try {
-        const { latest, prev } = await fetchWorldBankIndicatorLatest(
-          cfg.country,
-          cfg.indicator,
+        const byCountry = await fetchWorldBankIndicatorLatestMulti(
+          codes,
+          def.indicator,
+          { fromYear, toYear: nowYear },
         );
-        if (!latest) continue;
 
-        const scale = cfg.scale ?? 1;
-        const value = latest.value / scale;
-        const prevValue = prev ? prev.value / scale : undefined;
+        for (const c of countries) {
+          const hit = byCountry[c.wbId];
+          if (!hit?.latest) continue;
+          const scale = def.scale ?? 1;
+          const value = hit.latest.value / scale;
+          const prevValue = hit.prev ? hit.prev.value / scale : undefined;
 
-        out.push({
-          id: cfg.id,
-          name: cfg.name,
-          region: cfg.region,
-          value,
-          unit: cfg.unit,
-          period: latest.date,
-          prev_value: prevValue,
-          prev_period: prev?.date,
-          frequency: cfg.frequency,
-          history: [
-            { period: latest.date, value },
-            ...(prev ? [{ period: prev.date, value: prevValue! }] : []),
-          ],
-        });
+          out.push({
+            id: `WB_${c.region}_${def.key}`,
+            name: `${c.label} · ${def.name}`,
+            region: c.region,
+            value,
+            unit: def.unit,
+            period: hit.latest.date,
+            prev_value: prevValue,
+            prev_period: hit.prev?.date,
+            frequency: def.frequency,
+            history: [
+              { period: hit.latest.date, value },
+              ...(hit.prev ? [{ period: hit.prev.date, value: prevValue! }] : []),
+            ],
+          });
+        }
       } catch (err) {
-        console.error('WorldBank fetch failed:', cfg.id, err);
+        console.error('WorldBank fetch failed:', def.key, err);
       }
     }
   });
 
   await Promise.all(workers);
-  out.sort((a, b) => a.region.localeCompare(b.region) || a.name.localeCompare(b.name));
+  out.sort(
+    (a, b) => a.region.localeCompare(b.region) || a.name.localeCompare(b.name),
+  );
   return out;
+};
+
+const runWithConcurrency = async <T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+) => {
+  let cursor = 0;
+  const workers = Array.from({ length: Math.max(1, concurrency) }).map(
+    async () => {
+      while (cursor < items.length) {
+        const item = items[cursor];
+        cursor += 1;
+        if (!item) continue;
+        await fn(item);
+      }
+    },
+  );
+  await Promise.all(workers);
+};
+
+const fetchPublicMarket = async (
+  now: Date,
+  opts?: { includeChina?: boolean },
+): Promise<(MarketItem & { history?: MarketHistoryPoint[] })[]> => {
+  const includeChina = opts?.includeChina !== false;
+
+  const from = new Date(now);
+  from.setDate(from.getDate() - 31);
+  const d1 = toYYYYMMDD(from);
+  const d2 = toYYYYMMDD(now);
+
+  const marketSeries = [
+    ...(includeChina
+      ? ([
+          { id: 'sh000001', name: '上证指数', region: 'CN', kind: 'tencent' as const },
+          { id: 'sz399001', name: '深证成指', region: 'CN', kind: 'tencent' as const },
+          { id: 'sz399006', name: '创业板指', region: 'CN', kind: 'tencent' as const },
+          { id: 'sh000300', name: '沪深300', region: 'CN', kind: 'tencent' as const },
+          { id: 'sh000905', name: '中证500', region: 'CN', kind: 'tencent' as const },
+          { id: 'sh000016', name: '上证50', region: 'CN', kind: 'tencent' as const },
+          { id: 'sh000688', name: '科创50', region: 'CN', kind: 'tencent' as const },
+          { id: 'sz399673', name: '创业板50', region: 'CN', kind: 'tencent' as const },
+        ] as const)
+      : []),
+
+    // Global indices (Stooq)
+    { id: '^spx', name: 'S&P 500', region: 'US', kind: 'stooq' as const, unit: '点' },
+    { id: '^ndx', name: 'NASDAQ 100', region: 'US', kind: 'stooq' as const, unit: '点' },
+    { id: '^dji', name: '道琼斯工业指数', region: 'US', kind: 'stooq' as const, unit: '点' },
+    { id: '^hsi', name: '恒生指数', region: 'HK', kind: 'stooq' as const, unit: '点' },
+    { id: '^nkx', name: '日经225', region: 'JP', kind: 'stooq' as const, unit: '点' },
+    { id: '^dax', name: '德国DAX', region: 'EU', kind: 'stooq' as const, unit: '点' },
+    { id: '^cac', name: '法国CAC40', region: 'EU', kind: 'stooq' as const, unit: '点' },
+    { id: '^ukx', name: '英国FTSE 100', region: 'EU', kind: 'stooq' as const, unit: '点' },
+    { id: '^smi', name: '瑞士SMI', region: 'EU', kind: 'stooq' as const, unit: '点' },
+    { id: '^aex', name: '荷兰AEX', region: 'EU', kind: 'stooq' as const, unit: '点' },
+    { id: '^ibex', name: '西班牙IBEX35', region: 'EU', kind: 'stooq' as const, unit: '点' },
+
+    // Bond market (ETFs)
+    { id: 'tlt.us', name: '美债ETF：TLT(20Y+)', region: 'US', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'ief.us', name: '美债ETF：IEF(7-10Y)', region: 'US', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'shy.us', name: '美债ETF：SHY(1-3Y)', region: 'US', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'lqd.us', name: '信用债ETF：LQD(投资级)', region: 'US', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'hyg.us', name: '高收益债ETF：HYG', region: 'US', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'agg.us', name: '综合债ETF：AGG', region: 'US', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'bnd.us', name: '综合债ETF：BND', region: 'US', kind: 'stooq' as const, unit: 'USD' },
+
+    // REITs
+    { id: 'reit.us', name: 'REITs(指数/ETF)', region: 'US', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'vnq.us', name: 'REITs ETF：VNQ', region: 'US', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'iyr.us', name: 'REITs ETF：IYR', region: 'US', kind: 'stooq' as const, unit: 'USD' },
+
+    // Commodities proxies (ETFs)
+    { id: 'gld.us', name: '黄金ETF：GLD', region: 'COM', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'slv.us', name: '白银ETF：SLV', region: 'COM', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'uso.us', name: '原油ETF：USO', region: 'COM', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'dbc.us', name: '商品ETF：DBC', region: 'COM', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'pdbc.us', name: '商品ETF：PDBC', region: 'COM', kind: 'stooq' as const, unit: 'USD' },
+    { id: 'uup.us', name: '美元指数ETF：UUP', region: 'FX', kind: 'stooq' as const, unit: 'USD' },
+
+    // Volatility index (CBOE)
+    { id: 'VIX', name: 'VIX恐慌指数', region: 'US', kind: 'cboe_vix' as const, unit: '点' },
+  ];
+
+  const market: (MarketItem & { history?: MarketHistoryPoint[] })[] = [];
+
+  const stooqSeries = marketSeries.filter(
+    (s): s is Extract<(typeof marketSeries)[number], { kind: 'stooq' }> =>
+      s.kind === 'stooq',
+  );
+  const tencentSeries = marketSeries.filter(
+    (s): s is Extract<(typeof marketSeries)[number], { kind: 'tencent' }> =>
+      s.kind === 'tencent',
+  );
+  const cboe = marketSeries.find(
+    (s): s is Extract<(typeof marketSeries)[number], { kind: 'cboe_vix' }> =>
+      s.kind === 'cboe_vix',
+  );
+
+  await runWithConcurrency(stooqSeries, 6, async (s) => {
+    try {
+      const rows = await fetchStooqDaily(s.id, {
+        fromYYYYMMDD: d1,
+        toYYYYMMDD: d2,
+      });
+      if (rows.length < 2) return;
+      rows.sort((a, b) => a.date.localeCompare(b.date));
+      const latest = rows[rows.length - 1];
+      const prev = rows[rows.length - 2];
+      const pct = prev.close ? ((latest.close - prev.close) / prev.close) * 100 : 0;
+
+      market.push({
+        id: s.id,
+        name: s.name,
+        region: s.region,
+        close: latest.close,
+        pct_chg: pct,
+        trade_date: latest.date.replace(/-/g, ''),
+        unit: (s as any).unit ?? '点',
+        frequency: '日度',
+        history: rows.map((r, idx) => ({
+          trade_date: r.date.replace(/-/g, ''),
+          close: r.close,
+          pct_chg:
+            idx === 0 || rows[idx - 1].close === 0
+              ? 0
+              : ((r.close - rows[idx - 1].close) / rows[idx - 1].close) * 100,
+        })),
+      });
+    } catch (err) {
+      console.error('Public market fetch failed (stooq):', s.id, err);
+    }
+  });
+
+  await runWithConcurrency(tencentSeries, 4, async (s) => {
+    try {
+      const rows = await fetchTencentKlineDaily(s.id, 60);
+      if (rows.length < 2) return;
+      rows.sort((a, b) => a.date.localeCompare(b.date));
+      const latest = rows[rows.length - 1];
+
+      market.push({
+        id: s.id,
+        name: s.name,
+        region: s.region,
+        close: latest.close,
+        pct_chg: latest.pct_chg,
+        trade_date: latest.date.replace(/-/g, ''),
+        unit: '点',
+        frequency: '日度',
+        history: rows.map((r) => ({
+          trade_date: r.date.replace(/-/g, ''),
+          close: r.close,
+          pct_chg: r.pct_chg,
+        })),
+      });
+    } catch (err) {
+      console.error('Public market fetch failed (tencent):', s.id, err);
+    }
+  });
+
+  if (cboe) {
+    try {
+      const rows = await fetchCboeVixDaily({ fromYYYYMMDD: d1, toYYYYMMDD: d2 });
+      if (rows.length >= 2) {
+        rows.sort((a, b) => a.date.localeCompare(b.date));
+        const latest = rows[rows.length - 1];
+        const prev = rows[rows.length - 2];
+        const pct = prev.close ? ((latest.close - prev.close) / prev.close) * 100 : 0;
+
+        market.push({
+          id: cboe.id,
+          name: cboe.name,
+          region: cboe.region,
+          close: latest.close,
+          pct_chg: pct,
+          trade_date: latest.date.replace(/-/g, ''),
+          unit: (cboe as any).unit ?? '点',
+          frequency: '日度',
+          history: rows.map((r, idx) => ({
+            trade_date: r.date.replace(/-/g, ''),
+            close: r.close,
+            pct_chg:
+              idx === 0 || rows[idx - 1].close === 0
+                ? 0
+                : ((r.close - rows[idx - 1].close) / rows[idx - 1].close) * 100,
+          })),
+        });
+      }
+    } catch (err) {
+      console.error('Public market fetch failed (cboe vix):', err);
+    }
+  }
+
+  // AkShare-like: Sina futures quotes (energy / metals / grains)
+  try {
+    const defs = [
+      { code: 'hf_CL', region: 'COM', unit: 'USD', name: 'WTI原油(期货)' },
+      { code: 'hf_OIL', region: 'COM', unit: 'USD', name: '布伦特原油(期货)' },
+      { code: 'hf_NG', region: 'COM', unit: 'USD', name: '天然气(期货)' },
+      { code: 'hf_GC', region: 'COM', unit: 'USD', name: '黄金(期货)' },
+      { code: 'hf_SI', region: 'COM', unit: 'USD', name: '白银(期货)' },
+      { code: 'hf_HG', region: 'COM', unit: 'USD', name: '铜(期货)' },
+      { code: 'hf_C', region: 'COM', unit: 'USD', name: '玉米(期货)' },
+      { code: 'hf_W', region: 'COM', unit: 'USD', name: '小麦(期货)' },
+      { code: 'hf_S', region: 'COM', unit: 'USD', name: '大豆(期货)' },
+      { code: 'hf_BO', region: 'COM', unit: 'USD', name: '豆油(期货)' },
+      { code: 'hf_SM', region: 'COM', unit: 'USD', name: '豆粕(期货)' },
+      { code: 'hf_KC', region: 'COM', unit: 'USD', name: '咖啡(期货)' },
+      { code: 'hf_CT', region: 'COM', unit: 'USD', name: '棉花(期货)' },
+    ] as const;
+
+    const quotes = await fetchSinaFuturesQuotes(defs.map((d) => d.code));
+    for (const d of defs) {
+      const q = quotes[d.code];
+      if (!q || !Number.isFinite(q.price)) continue;
+      const base =
+        typeof q.prev_settle === 'number' && q.prev_settle !== 0
+          ? q.prev_settle
+          : typeof q.open === 'number' && q.open !== 0
+            ? q.open
+            : undefined;
+      const pct = base ? ((q.price - base) / base) * 100 : 0;
+      const tradeDate = q.date ? q.date.replace(/-/g, '') : formatDateYYYYMMDD(now);
+
+      market.push({
+        id: d.code,
+        name: q.name || d.name,
+        region: d.region,
+        close: q.price,
+        pct_chg: pct,
+        trade_date: tradeDate,
+        unit: d.unit,
+        frequency: '实时',
+      });
+    }
+  } catch (err) {
+    console.error('Sina futures fetch failed', err);
+  }
+
+  market.sort((a, b) => a.region.localeCompare(b.region) || a.name.localeCompare(b.name));
+  return market;
 };
 
 const getPublicEconomySummary = async (opts?: {
@@ -623,124 +881,7 @@ const getPublicEconomySummary = async (opts?: {
   error?: EconomySummary['error'];
 }): Promise<EconomySummary> => {
   const now = new Date();
-  const from = new Date(now);
-  from.setDate(from.getDate() - 31);
-  const d1 = toYYYYMMDD(from);
-  const d2 = toYYYYMMDD(now);
-
-  const marketSeries = [
-    // CN indices (Tencent Kline)
-    { id: 'sh000001', name: '上证指数', region: 'CN', kind: 'tencent' as const },
-    { id: 'sz399001', name: '深证成指', region: 'CN', kind: 'tencent' as const },
-    { id: 'sz399006', name: '创业板指', region: 'CN', kind: 'tencent' as const },
-    { id: 'sh000300', name: '沪深300', region: 'CN', kind: 'tencent' as const },
-    // Global indices (Stooq)
-    { id: '^spx', name: 'S&P 500', region: 'US', kind: 'stooq' as const },
-    { id: '^ndx', name: 'NASDAQ 100', region: 'US', kind: 'stooq' as const },
-    { id: '^dji', name: '道琼斯工业指数', region: 'US', kind: 'stooq' as const },
-    { id: '^hsi', name: '恒生指数', region: 'HK', kind: 'stooq' as const },
-    { id: '^nkx', name: '日经225', region: 'JP', kind: 'stooq' as const },
-    { id: '^dax', name: '德国DAX', region: 'EU', kind: 'stooq' as const },
-    { id: '^cac', name: '法国CAC40', region: 'EU', kind: 'stooq' as const },
-    { id: '^ukx', name: '英国FTSE 100', region: 'EU', kind: 'stooq' as const },
-    // Volatility index (CBOE)
-    { id: 'VIX', name: 'VIX恐慌指数', region: 'US', kind: 'cboe_vix' as const },
-  ];
-
-  const market: (MarketItem & { history?: MarketHistoryPoint[] })[] = [];
-
-  for (const s of marketSeries) {
-    try {
-      if (s.kind === 'stooq') {
-        const rows = await fetchStooqDaily(s.id, {
-          fromYYYYMMDD: d1,
-          toYYYYMMDD: d2,
-        });
-        if (rows.length < 2) continue;
-        rows.sort((a, b) => a.date.localeCompare(b.date));
-        const latest = rows[rows.length - 1];
-        const prev = rows[rows.length - 2];
-        const pct = prev.close
-          ? ((latest.close - prev.close) / prev.close) * 100
-          : 0;
-
-        market.push({
-          id: s.id,
-          name: s.name,
-          region: s.region,
-          close: latest.close,
-          pct_chg: pct,
-          trade_date: latest.date.replace(/-/g, ''),
-          unit: '点',
-          frequency: '日度',
-          history: rows.map((r, idx) => ({
-            trade_date: r.date.replace(/-/g, ''),
-            close: r.close,
-            pct_chg:
-              idx === 0 || rows[idx - 1].close === 0
-                ? 0
-                : ((r.close - rows[idx - 1].close) / rows[idx - 1].close) *
-                  100,
-          })),
-        });
-      } else if (s.kind === 'cboe_vix') {
-        const rows = await fetchCboeVixDaily({
-          fromYYYYMMDD: d1,
-          toYYYYMMDD: d2,
-        });
-        if (rows.length < 2) continue;
-        rows.sort((a, b) => a.date.localeCompare(b.date));
-        const latest = rows[rows.length - 1];
-        const prev = rows[rows.length - 2];
-        const pct = prev.close
-          ? ((latest.close - prev.close) / prev.close) * 100
-          : 0;
-
-        market.push({
-          id: s.id,
-          name: s.name,
-          region: s.region,
-          close: latest.close,
-          pct_chg: pct,
-          trade_date: latest.date.replace(/-/g, ''),
-          unit: '点',
-          frequency: '日度',
-          history: rows.map((r, idx) => ({
-            trade_date: r.date.replace(/-/g, ''),
-            close: r.close,
-            pct_chg:
-              idx === 0 || rows[idx - 1].close === 0
-                ? 0
-                : ((r.close - rows[idx - 1].close) / rows[idx - 1].close) *
-                  100,
-          })),
-        });
-      } else {
-        const rows = await fetchTencentKlineDaily(s.id, 60);
-        if (rows.length < 2) continue;
-        rows.sort((a, b) => a.date.localeCompare(b.date));
-        const latest = rows[rows.length - 1];
-
-        market.push({
-          id: s.id,
-          name: s.name,
-          region: s.region,
-          close: latest.close,
-          pct_chg: latest.pct_chg,
-          trade_date: latest.date.replace(/-/g, ''),
-          unit: '点',
-          frequency: '日度',
-          history: rows.map((r) => ({
-            trade_date: r.date.replace(/-/g, ''),
-            close: r.close,
-            pct_chg: r.pct_chg,
-          })),
-        });
-      }
-    } catch (err) {
-      console.error('Public market fetch failed:', s.id, err);
-    }
-  }
+  const market = await fetchPublicMarket(now, { includeChina: true });
 
   const { latest: ycLatest, prev: ycPrev } =
     await fetchTreasuryYieldCurveLatest().catch((err) => {
@@ -1164,23 +1305,67 @@ const getPublicEconomySummary = async (opts?: {
 
 export const GET = async () => {
   if (!hasTushareToken()) {
-    // Public 模式也走磁盘缓存：避免首页/经济页每次都等待多源请求完成
+    // Public 模式也走磁盘缓存：
+    // - 市场数据：每 10 分钟刷新一次（滚动条）
+    // - 宏观指标：每天上海时间 21:00 后刷新一次（或太久未刷新）
+    const now = new Date();
     const cached = loadCache();
     const MARKET_TTL_MS = 10 * 60 * 1000;
 
-    const cachedUpdatedAt = cached?.updatedAt ?? 0;
-    const cachedIsPublic =
-      cached?.data?.source === 'public' || cached?.data?.reason === 'missing_token';
+    const cachedIsPublic = cached?.data?.source === 'public';
 
-    if (cached && cachedIsPublic && Date.now() - cachedUpdatedAt < MARKET_TTL_MS) {
+    const cachedMarketUpdatedAt =
+      cached?.marketUpdatedAt ?? cached?.updatedAt ?? 0;
+    const cachedMacroUpdatedAt =
+      cached?.macroUpdatedAt ?? cached?.updatedAt ?? 0;
+
+    const marketFresh =
+      cachedIsPublic &&
+      cachedMarketUpdatedAt > 0 &&
+      Date.now() - cachedMarketUpdatedAt < MARKET_TTL_MS;
+
+    const nowShanghaiDay = getShanghaiDateKey(now);
+    const macroShanghaiDay = cachedMacroUpdatedAt
+      ? getShanghaiDateKey(new Date(cachedMacroUpdatedAt))
+      : '';
+    const macroTooOld =
+      !cachedMacroUpdatedAt ||
+      Date.now() - cachedMacroUpdatedAt > 36 * 60 * 60 * 1000;
+    const macroNeedsRefresh =
+      !cachedIsPublic ||
+      macroTooOld ||
+      (isAfterShanghai21(now) && macroShanghaiDay !== nowShanghaiDay);
+
+    if (cached && cachedIsPublic && marketFresh && !macroNeedsRefresh) {
       return Response.json(cached.data);
     }
 
-    const summary = await getPublicEconomySummary({ reason: 'missing_token' });
+    // 宏观需要刷新：直接全量拉取（市场 + 宏观）
+    if (!cached || !cachedIsPublic || macroNeedsRefresh) {
+      const summary = await getPublicEconomySummary({ reason: 'missing_token' });
+      saveCache({
+        updatedAt: Date.now(),
+        marketUpdatedAt: Date.now(),
+        macroUpdatedAt: Date.now(),
+        data: summary,
+      });
+      return Response.json(summary);
+    }
+
+    // 仅市场过期：刷新市场，复用缓存宏观
+    const market = await fetchPublicMarket(now, { includeChina: true });
+    const macro = cached.data.macro ?? [];
+    const summary: EconomySummary = {
+      source: 'public',
+      reason: 'missing_token',
+      market,
+      macro,
+      tickerMarket: market.map(({ history, ...rest }) => rest),
+    };
     saveCache({
       updatedAt: Date.now(),
       marketUpdatedAt: Date.now(),
-      macroUpdatedAt: Date.now(),
+      macroUpdatedAt: cachedMacroUpdatedAt || Date.now(),
       data: summary,
     });
     return Response.json(summary);
@@ -1236,7 +1421,7 @@ export const GET = async () => {
     if (!marketFresh || FORCE_REFRESH || !market.length) {
       market = [];
 
-      for (const series of INDEX_SERIES) {
+      await runWithConcurrency(INDEX_SERIES, 10, async (series) => {
         try {
           const rows = await callTushare(
             'index_daily',
@@ -1247,7 +1432,7 @@ export const GET = async () => {
             ['ts_code', 'trade_date', 'close', 'pct_chg'],
           );
 
-          if (!rows.length) continue;
+          if (!rows.length) return;
 
           rows.sort((a, b) =>
             String(a.trade_date).localeCompare(String(b.trade_date)),
@@ -1288,7 +1473,7 @@ export const GET = async () => {
             err,
           );
         }
-      }
+      });
 
       marketUpdatedAt = Date.now();
 
@@ -1331,6 +1516,43 @@ export const GET = async () => {
       }
 
       tickerMarket = nextTickerMarket;
+
+      // 补充全球市场/债券/商品/REITs（非 TuShare 源，避免仅 A 股指数过于单薄）
+      if (market.length) {
+        try {
+          const extras = await fetchPublicMarket(now, { includeChina: false });
+          if (extras.length) {
+            const existing = new Set(market.map((m) => m.id));
+            for (const ex of extras) {
+              if (!existing.has(ex.id)) market.push(ex);
+            }
+            market.sort(
+              (a, b) =>
+                a.region.localeCompare(b.region) || a.name.localeCompare(b.name),
+            );
+          }
+        } catch (err) {
+          console.error('Public market extras fetch failed (tushare path)', err);
+        }
+      }
+    }
+
+    // 若市场指数拉取失败，直接回退到 public（避免继续尝试宏观接口导致整体超时）
+    if (!market.length) {
+      const summary = await getPublicEconomySummary({
+        reason: 'tushare_failed',
+        error:
+          lastTushareError ?? {
+            message: 'Tushare market calls failed. Falling back to public data.',
+          },
+      });
+      saveCache({
+        updatedAt: Date.now(),
+        marketUpdatedAt: Date.now(),
+        macroUpdatedAt: Date.now(),
+        data: summary,
+      });
+      return Response.json(summary);
     }
 
     // 宏观经济：每天上海时间 21:00 更新一次
@@ -1821,6 +2043,12 @@ export const GET = async () => {
             message: 'Tushare calls failed. Please verify token permissions.',
           },
       });
+      saveCache({
+        updatedAt: Date.now(),
+        marketUpdatedAt: Date.now(),
+        macroUpdatedAt: Date.now(),
+        data: summary,
+      });
       return Response.json(summary);
     }
 
@@ -1851,6 +2079,12 @@ export const GET = async () => {
     const summary = await getPublicEconomySummary({
       reason: 'tushare_failed',
       error: { message: 'Economy endpoint failed, falling back to public data.' },
+    });
+    saveCache({
+      updatedAt: Date.now(),
+      marketUpdatedAt: Date.now(),
+      macroUpdatedAt: Date.now(),
+      data: summary,
     });
     return Response.json(summary);
   }
