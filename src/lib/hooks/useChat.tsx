@@ -17,7 +17,12 @@ import {
   useState,
 } from 'react';
 import crypto from 'crypto';
-import { useParams, useSearchParams, useRouter, usePathname } from 'next/navigation';
+import {
+  useParams,
+  useSearchParams,
+  useRouter,
+  usePathname,
+} from 'next/navigation';
 import { toast } from 'sonner';
 import { getSuggestions } from '../actions';
 import { MinimalProvider } from '../models/types';
@@ -325,6 +330,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
   const messagesRef = useRef<Message[]>([]);
   const messageAppearedRef = useRef<boolean>(false);
+  const chatHistoryRef = useRef<[string, string][]>([]);
+  const handledMessageEndRef = useRef<Set<string>>(new Set());
 
   const chatTurns = useMemo((): ChatTurn[] => {
     return messages.filter(
@@ -500,6 +507,10 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   }, [messages]);
 
   useEffect(() => {
+    chatHistoryRef.current = chatHistory;
+  }, [chatHistory]);
+
+  useEffect(() => {
     if (isMessagesLoaded && isConfigReady) {
       setIsReady(true);
       console.debug(new Date(), 'app:ready');
@@ -523,6 +534,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       setLoading(false);
       setMessageAppeared(false);
       messageAppearedRef.current = false;
+      handledMessageEndRef.current.clear();
       messagesRef.current = [];
     }
   }, [pathname]);
@@ -542,9 +554,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         ...prev.slice(0, messages.length > 2 ? messages.indexOf(message) : 0),
       ];
     });
-    setChatHistory((prev) => {
-      return [...prev.slice(0, chatTurns.length > 2 ? chatTurnsIndex - 1 : 0)];
-    });
+    const nextHistory = chatHistoryRef.current.slice(
+      0,
+      chatTurns.length > 2 ? chatTurnsIndex - 1 : 0,
+    );
+    chatHistoryRef.current = nextHistory;
+    setChatHistory(nextHistory);
 
     sendMessage(message.content, message.messageId, true);
   };
@@ -586,6 +601,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     let added = false;
 
     messageId = messageId ?? crypto.randomBytes(7).toString('hex');
+    handledMessageEndRef.current.delete(messageId);
 
     // 语言偏好：默认中文，只有当全局语言切到英文时才默认英文
     const languagePref =
@@ -669,11 +685,20 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       }
 
       if (data.type === 'messageEnd') {
-        setChatHistory((prevHistory) => [
-          ...prevHistory,
-          ['human', message],
-          ['assistant', recievedMessage],
-        ]);
+        if (handledMessageEndRef.current.has(messageId)) {
+          return;
+        }
+        handledMessageEndRef.current.add(messageId);
+
+        setChatHistory((prevHistory) => {
+          const nextHistory: [string, string][] = [
+            ...prevHistory,
+            ['human', message],
+            ['assistant', recievedMessage],
+          ];
+          chatHistoryRef.current = nextHistory;
+          return nextHistory;
+        });
 
         setLoading(false);
 
@@ -681,14 +706,15 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
         const autoMediaSearch = getAutoMediaSearch();
 
-        if (autoMediaSearch) {
-          document
-            .getElementById(`search-images-${lastMsg.messageId}`)
-            ?.click();
-
-          document
-            .getElementById(`search-videos-${lastMsg.messageId}`)
-            ?.click();
+        if (autoMediaSearch && lastMsg) {
+          setTimeout(() => {
+            document
+              .getElementById(`search-images-${lastMsg.messageId}`)
+              ?.click();
+            document
+              .getElementById(`search-videos-${lastMsg.messageId}`)
+              ?.click();
+          }, 200);
         }
 
         /* Check if there are sources after message id's index and no suggestions */
@@ -746,8 +772,11 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         focusMode: focusMode,
         optimizationMode: optimizationMode,
         history: rewrite
-          ? chatHistory.slice(0, messageIndex === -1 ? undefined : messageIndex)
-          : chatHistory,
+          ? chatHistoryRef.current.slice(
+              0,
+              messageIndex === -1 ? undefined : messageIndex,
+            )
+          : chatHistoryRef.current,
         chatModel: {
           key: chatModelProvider.key,
           providerId: chatModelProvider.providerId,
@@ -769,20 +798,38 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        partialChunk += decoder.decode();
+        break;
+      }
 
       partialChunk += decoder.decode(value, { stream: true });
 
-      try {
-        const messages = partialChunk.split('\n');
-        for (const msg of messages) {
-          if (!msg.trim()) continue;
-          const json = JSON.parse(msg);
-          messageHandler(json);
+      let lineBreakIndex = partialChunk.indexOf('\n');
+      while (lineBreakIndex !== -1) {
+        const raw = partialChunk.slice(0, lineBreakIndex).trim();
+        partialChunk = partialChunk.slice(lineBreakIndex + 1);
+
+        if (raw) {
+          try {
+            const json = JSON.parse(raw);
+            await messageHandler(json);
+          } catch (error) {
+            console.warn('Failed to parse stream line:', raw.slice(0, 120));
+          }
         }
-        partialChunk = '';
-      } catch (error) {
-        console.warn('Incomplete JSON, waiting for next chunk...');
+
+        lineBreakIndex = partialChunk.indexOf('\n');
+      }
+    }
+
+    const tail = partialChunk.trim();
+    if (tail) {
+      try {
+        const json = JSON.parse(tail);
+        await messageHandler(json);
+      } catch {
+        console.warn('Dropping non-json stream tail');
       }
     }
   };
