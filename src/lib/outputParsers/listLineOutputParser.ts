@@ -4,6 +4,8 @@ interface LineListOutputParserArgs {
   key?: string;
 }
 
+const LIST_PREFIX_REGEX = /^(\s*(-|\*|\d+\.\s|\d+\)\s|\u2022)\s*)+/;
+
 class LineListOutputParser extends BaseOutputParser<string[]> {
   private key = 'questions';
 
@@ -18,26 +20,61 @@ class LineListOutputParser extends BaseOutputParser<string[]> {
 
   lc_namespace = ['langchain', 'output_parsers', 'line_list_output_parser'];
 
-  async parse(text: string): Promise<string[]> {
-    text = text.trim() || '';
+  private extractTaggedBlock(text: string) {
+    const fullTagPattern = new RegExp(`<${this.key}>([\\s\\S]*?)<\\/${this.key}>`, 'i');
+    const openOnlyPattern = new RegExp(`<${this.key}>([\\s\\S]*)`, 'i');
 
-    const regex = /^(\s*(-|\*|\d+\.\s|\d+\)\s|\u2022)\s*)+/;
-    const startKeyIndex = text.indexOf(`<${this.key}>`);
-    const endKeyIndex = text.indexOf(`</${this.key}>`);
-
-    if (startKeyIndex === -1 || endKeyIndex === -1) {
-      return [];
+    const fullTag = text.match(fullTagPattern);
+    if (fullTag?.[1]) {
+      return fullTag[1];
     }
 
-    const questionsStartIndex =
-      startKeyIndex === -1 ? 0 : startKeyIndex + `<${this.key}>`.length;
-    const questionsEndIndex = endKeyIndex === -1 ? text.length : endKeyIndex;
-    const lines = text
-      .slice(questionsStartIndex, questionsEndIndex)
-      .trim()
+    const openOnlyTag = text.match(openOnlyPattern);
+    if (openOnlyTag?.[1]) {
+      return openOnlyTag[1];
+    }
+
+    return null;
+  }
+
+  private normalizeLines(raw: string) {
+    return raw
+      .replace(/```[a-zA-Z]*\n?/g, '')
+      .replace(/```/g, '')
       .split('\n')
-      .filter((line) => line.trim() !== '')
-      .map((line) => line.replace(regex, ''));
+      .map((line) =>
+        line
+          .replace(LIST_PREFIX_REGEX, '')
+          .replace(/<[^>]+>/g, '')
+          .trim(),
+      )
+      .filter((line) => line.length > 0);
+  }
+
+  async parse(text: string): Promise<string[]> {
+    text = text.trim() || '';
+    if (!text) return [];
+
+    const taggedBlock = this.extractTaggedBlock(text);
+    if (taggedBlock) {
+      return this.normalizeLines(taggedBlock);
+    }
+
+    // Fallback for model outputs that skip XML tags.
+    if (this.key === 'links') {
+      const links = Array.from(
+        new Set(text.match(/https?:\/\/[^\s<>")]+/gi) ?? []),
+      ).map((link) => link.trim());
+
+      return links;
+    }
+
+    const lines = this.normalizeLines(text);
+
+    // For generic list keys (like suggestions), avoid returning a single giant paragraph.
+    if (lines.length <= 1) {
+      return [];
+    }
 
     return lines;
   }
