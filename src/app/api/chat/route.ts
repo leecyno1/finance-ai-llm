@@ -92,6 +92,19 @@ const safeValidateBody = (data: unknown) => {
   };
 };
 
+const safeParseEventData = (raw: unknown) => {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as { type?: string; data?: any };
+  } catch (err) {
+    console.warn('[chat route] Failed to parse emitter event payload');
+    return null;
+  }
+};
+
 const handleEmitterEvents = async (
   stream: EventEmitter,
   writer: WritableStreamDefaultWriter,
@@ -103,7 +116,9 @@ const handleEmitterEvents = async (
   const aiMessageId = crypto.randomBytes(7).toString('hex');
 
   stream.on('data', (data) => {
-    const parsedData = JSON.parse(data);
+    const parsedData = safeParseEventData(data);
+    if (!parsedData?.type) return;
+
     if (parsedData.type === 'response') {
       writer.write(
         encoder.encode(
@@ -163,12 +178,12 @@ const handleEmitterEvents = async (
       .execute();
   });
   stream.on('error', (data) => {
-    const parsedData = JSON.parse(data);
+    const parsedData = safeParseEventData(data);
     writer.write(
       encoder.encode(
         JSON.stringify({
           type: 'error',
-          data: parsedData.data,
+          data: parsedData?.data ?? 'stream_error',
         }),
       ),
     );
