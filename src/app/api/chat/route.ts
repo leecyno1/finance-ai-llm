@@ -115,36 +115,39 @@ const handleEmitterEvents = async (
   let receivedMessage = '';
   const aiMessageId = crypto.randomBytes(7).toString('hex');
 
+  const safeWrite = (payload: Record<string, unknown>) => {
+    writer
+      .write(encoder.encode(JSON.stringify(payload) + '\n'))
+      .catch(() => {});
+  };
+
+  const safeClose = () => {
+    writer.close().catch(() => {});
+  };
+
   stream.on('data', (data) => {
     const parsedData = safeParseEventData(data);
     if (!parsedData?.type) return;
 
     if (parsedData.type === 'response') {
-      writer.write(
-        encoder.encode(
-          JSON.stringify({
-            type: 'message',
-            data: parsedData.data,
-            messageId: aiMessageId,
-          }) + '\n',
-        ),
-      );
+      safeWrite({
+        type: 'message',
+        data: parsedData.data,
+        messageId: aiMessageId,
+      });
 
       receivedMessage += parsedData.data;
     } else if (parsedData.type === 'sources') {
-      writer.write(
-        encoder.encode(
-          JSON.stringify({
-            type: 'sources',
-            data: parsedData.data,
-            messageId: aiMessageId,
-          }) + '\n',
-        ),
-      );
+      safeWrite({
+        type: 'sources',
+        data: parsedData.data,
+        messageId: aiMessageId,
+      });
 
       const sourceMessageId = crypto.randomBytes(7).toString('hex');
 
-      db.insert(messagesSchema)
+      void db
+        .insert(messagesSchema)
         .values({
           owner,
           chatId: chatId,
@@ -153,20 +156,18 @@ const handleEmitterEvents = async (
           sources: parsedData.data,
           createdAt: new Date().toString(),
         })
-        .execute();
+        .execute()
+        .catch(() => {});
     }
   });
   stream.on('end', () => {
-    writer.write(
-      encoder.encode(
-        JSON.stringify({
-          type: 'messageEnd',
-        }) + '\n',
-      ),
-    );
-    writer.close();
+    safeWrite({
+      type: 'messageEnd',
+    });
+    safeClose();
 
-    db.insert(messagesSchema)
+    void db
+      .insert(messagesSchema)
       .values({
         owner,
         content: receivedMessage,
@@ -175,19 +176,16 @@ const handleEmitterEvents = async (
         role: 'assistant',
         createdAt: new Date().toString(),
       })
-      .execute();
+      .execute()
+      .catch(() => {});
   });
   stream.on('error', (data) => {
     const parsedData = safeParseEventData(data);
-    writer.write(
-      encoder.encode(
-        JSON.stringify({
-          type: 'error',
-          data: parsedData?.data ?? 'stream_error',
-        }),
-      ),
-    );
-    writer.close();
+    safeWrite({
+      type: 'error',
+      data: parsedData?.data ?? 'stream_error',
+    });
+    safeClose();
   });
 };
 
