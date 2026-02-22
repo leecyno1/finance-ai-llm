@@ -52,6 +52,8 @@ type BasicChainInput = {
   query: string;
 };
 
+const MAX_LINKS_PER_SEARCH = 3;
+
 class MetaSearchAgent implements MetaSearchAgentType {
   private config: Config;
   private strParser = new StringOutputParser();
@@ -93,19 +95,31 @@ class MetaSearchAgent implements MetaSearchAgentType {
 
         const links = await linksOutputParser.parse(input);
         let question = (await questionOutputParser.parse(input)) ?? input;
+        const limitedLinks = Array.from(
+          new Set(
+            links
+              .map((link) => link.trim())
+              .filter((link) => link.length > 0),
+          ),
+        ).slice(0, MAX_LINKS_PER_SEARCH);
+
+        question = question.replace(/<think>.*?<\/think>/gs, '').trim();
+        if (question.length > 500) {
+          question = question.slice(0, 500);
+        }
 
         if (question === 'not_needed') {
           return { query: '', docs: [] };
         }
 
-        if (links.length > 0) {
+        if (limitedLinks.length > 0) {
           if (question.length === 0) {
             question = 'summarize';
           }
 
           let docs: Document[] = [];
 
-          const linkDocs = await getDocumentsFromLinks({ links });
+          const linkDocs = await getDocumentsFromLinks({ links: limitedLinks });
 
           const docGroups: Document[] = [];
 
