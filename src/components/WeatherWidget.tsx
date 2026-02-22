@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Wind } from 'lucide-react';
+import { getMeasurementUnit } from '@/lib/config/clientRegistry';
 
 const WeatherWidget = () => {
   const [data, setData] = useState({
@@ -90,7 +91,7 @@ const WeatherWidget = () => {
           body: JSON.stringify({
             lat: location.latitude,
             lng: location.longitude,
-            measureUnit: localStorage.getItem('measureUnit') ?? 'Metric',
+            measureUnit: getMeasurementUnit(),
           }),
         });
 

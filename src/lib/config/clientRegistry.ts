@@ -19,3 +19,8 @@ export const getShowNewsWidget = () =>
   getClientConfig('showNewsWidget', 'true') === 'true';
 
 export const getLanguage = () => getClientConfig('language', 'zh');
+
+export const getMeasurementUnit = (): 'Metric' | 'Imperial' => {
+  const unit = getClientConfig('measureUnit', 'Metric');
+  return unit === 'Imperial' ? 'Imperial' : 'Metric';
+};
