@@ -15,6 +15,19 @@ interface ChatRequestBody {
   systemInstructions?: string;
 }
 
+const safeParseEmitterData = (raw: unknown) => {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as { type?: string; data?: any };
+  } catch {
+    console.warn('[search route] Failed to parse emitter event payload');
+    return null;
+  }
+};
+
 export const POST = async (req: Request) => {
   try {
     const body: ChatRequestBody = await req.json();
@@ -26,6 +39,7 @@ export const POST = async (req: Request) => {
       );
     }
 
+    body.query = body.query.trim().slice(0, 2000);
     body.history = body.history || [];
     body.optimizationMode = body.optimizationMode || 'balanced';
     body.stream = body.stream || false;
@@ -72,20 +86,13 @@ export const POST = async (req: Request) => {
           let sources: any[] = [];
 
           emitter.on('data', (data: string) => {
-            try {
-              const parsedData = JSON.parse(data);
-              if (parsedData.type === 'response') {
-                message += parsedData.data;
-              } else if (parsedData.type === 'sources') {
-                sources = parsedData.data;
-              }
-            } catch (error) {
-              reject(
-                Response.json(
-                  { message: 'Error parsing data' },
-                  { status: 500 },
-                ),
-              );
+            const parsedData = safeParseEmitterData(data);
+            if (!parsedData?.type) return;
+
+            if (parsedData.type === 'response') {
+              message += parsedData.data ?? '';
+            } else if (parsedData.type === 'sources') {
+              sources = parsedData.data ?? [];
             }
           });
 
@@ -128,37 +135,34 @@ export const POST = async (req: Request) => {
 
           try {
             controller.close();
-          } catch (error) {}
+          } catch {}
         });
 
         emitter.on('data', (data: string) => {
           if (signal.aborted) return;
 
-          try {
-            const parsedData = JSON.parse(data);
+          const parsedData = safeParseEmitterData(data);
+          if (!parsedData?.type) return;
 
-            if (parsedData.type === 'response') {
-              controller.enqueue(
-                encoder.encode(
-                  JSON.stringify({
-                    type: 'response',
-                    data: parsedData.data,
-                  }) + '\n',
-                ),
-              );
-            } else if (parsedData.type === 'sources') {
-              sources = parsedData.data;
-              controller.enqueue(
-                encoder.encode(
-                  JSON.stringify({
-                    type: 'sources',
-                    data: sources,
-                  }) + '\n',
-                ),
-              );
-            }
-          } catch (error) {
-            controller.error(error);
+          if (parsedData.type === 'response') {
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'response',
+                  data: parsedData.data,
+                }) + '\n',
+              ),
+            );
+          } else if (parsedData.type === 'sources') {
+            sources = parsedData.data ?? [];
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'sources',
+                  data: sources,
+                }) + '\n',
+              ),
+            );
           }
         });
 
@@ -177,7 +181,6 @@ export const POST = async (req: Request) => {
 
         emitter.on('error', (error: any) => {
           if (signal.aborted) return;
-
           controller.error(error);
         });
       },

@@ -339,25 +339,32 @@ class MetaSearchAgent implements MetaSearchAgentType {
 
     const filesData = fileIds
       .map((file) => {
-        const filePath = path.join(process.cwd(), 'uploads', file);
+        try {
+          const filePath = path.join(process.cwd(), 'uploads', file);
 
-        const contentPath = filePath + '-extracted.json';
-        const embeddingsPath = filePath + '-embeddings.json';
+          const contentPath = filePath + '-extracted.json';
+          const embeddingsPath = filePath + '-embeddings.json';
 
-        const content = JSON.parse(fs.readFileSync(contentPath, 'utf8'));
-        const embeddings = JSON.parse(fs.readFileSync(embeddingsPath, 'utf8'));
+          const content = JSON.parse(fs.readFileSync(contentPath, 'utf8'));
+          const embeddings = JSON.parse(
+            fs.readFileSync(embeddingsPath, 'utf8'),
+          );
 
-        const fileSimilaritySearchObject = content.contents.map(
-          (c: string, i: number) => {
-            return {
-              fileName: content.title,
-              content: c,
-              embeddings: embeddings.embeddings[i],
-            };
-          },
-        );
+          const fileSimilaritySearchObject = content.contents.map(
+            (c: string, i: number) => {
+              return {
+                fileName: content.title,
+                content: c,
+                embeddings: embeddings.embeddings[i],
+              };
+            },
+          );
 
-        return fileSimilaritySearchObject;
+          return fileSimilaritySearchObject;
+        } catch (err) {
+          console.warn('[metaSearchAgent] skip invalid upload embeddings', file);
+          return [];
+        }
       })
       .flat();
 
