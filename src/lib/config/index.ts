@@ -143,45 +143,40 @@ class ConfigManager {
   }
 
   private saveConfig() {
-    fs.writeFileSync(
-      this.configPath,
-      JSON.stringify(this.currentConfig, null, 2),
-    );
+    const dir = path.dirname(this.configPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    const content = JSON.stringify(this.currentConfig, null, 2);
+    const tmpPath = `${this.configPath}.${process.pid}.${Date.now()}.tmp`;
+
+    fs.writeFileSync(tmpPath, content);
+    fs.renameSync(tmpPath, this.configPath);
   }
 
   private initializeConfig() {
     const exists = fs.existsSync(this.configPath);
     if (!exists) {
-      fs.writeFileSync(
-        this.configPath,
-        JSON.stringify(this.currentConfig, null, 2),
-      );
-    } else {
-      try {
-        this.currentConfig = JSON.parse(
-          fs.readFileSync(this.configPath, 'utf-8'),
-        );
-      } catch (err) {
-        if (err instanceof SyntaxError) {
-          console.error(
-            `Error parsing config file at ${this.configPath}:`,
-            err,
-          );
-          console.log(
-            'Loading default config and overwriting the existing file.',
-          );
-          fs.writeFileSync(
-            this.configPath,
-            JSON.stringify(this.currentConfig, null, 2),
-          );
-          return;
-        } else {
-          console.log('Unknown error reading config file:', err);
-        }
+      this.saveConfig();
+      return;
+    }
+
+    try {
+      this.currentConfig = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        console.error(`Error parsing config file at ${this.configPath}:`, err);
+        console.log('Loading default config and overwriting the existing file.');
+        this.saveConfig();
+        return;
       }
 
-      this.currentConfig = this.migrateConfig(this.currentConfig);
+      console.log('Unknown error reading config file:', err);
+      return;
     }
+
+    this.currentConfig = this.migrateConfig(this.currentConfig);
   }
 
   private migrateConfig(config: Config): Config {
