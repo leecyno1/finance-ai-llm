@@ -1,11 +1,10 @@
 import generateSuggestions from '@/lib/chains/suggestionGeneratorAgent';
 import ModelRegistry from '@/lib/models/registry';
 import { ModelWithProvider } from '@/lib/models/types';
-import { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { AIMessage, BaseMessage, HumanMessage } from '@langchain/core/messages';
+import { toBaseMessages } from '@/lib/utils/chatHistory';
 
 interface SuggestionsGenerationBody {
-  chatHistory: any[];
+  chatHistory: unknown;
   chatModel: ModelWithProvider;
 }
 
@@ -13,15 +12,7 @@ export const POST = async (req: Request) => {
   try {
     const body: SuggestionsGenerationBody = await req.json();
 
-    const chatHistory = body.chatHistory
-      .map((msg: any) => {
-        if (msg.role === 'user') {
-          return new HumanMessage(msg.content);
-        } else if (msg.role === 'assistant') {
-          return new AIMessage(msg.content);
-        }
-      })
-      .filter((msg) => msg !== undefined) as BaseMessage[];
+    const chatHistory = toBaseMessages(body.chatHistory);
 
     const registry = new ModelRegistry();
 
