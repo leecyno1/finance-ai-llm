@@ -3,6 +3,7 @@ import { MetaSearchAgentType } from '@/lib/search/metaSearchAgent';
 import { searchHandlers } from '@/lib/search';
 import ModelRegistry from '@/lib/models/registry';
 import { ModelWithProvider } from '@/lib/models/types';
+import { parseLooseJson } from '@/lib/utils/json';
 
 interface ChatRequestBody {
   optimizationMode: 'speed' | 'balanced';
@@ -16,16 +17,13 @@ interface ChatRequestBody {
 }
 
 const safeParseEmitterData = (raw: unknown) => {
-  if (typeof raw !== 'string') {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as { type?: string; data?: any };
-  } catch {
+  const parsed = parseLooseJson<{ type?: string; data?: any }>(raw);
+  if (!parsed) {
     console.warn('[search route] Failed to parse emitter event payload');
     return null;
   }
+
+  return parsed;
 };
 
 export const POST = async (req: Request) => {

@@ -10,6 +10,7 @@ import { z } from 'zod';
 import ModelRegistry from '@/lib/models/registry';
 import { ModelWithProvider } from '@/lib/models/types';
 import { getClientIdFromHeaders } from '@/lib/server/client';
+import { parseLooseJson } from '@/lib/utils/json';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -93,16 +94,13 @@ const safeValidateBody = (data: unknown) => {
 };
 
 const safeParseEventData = (raw: unknown) => {
-  if (typeof raw !== 'string') {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as { type?: string; data?: any };
-  } catch (err) {
+  const parsed = parseLooseJson<{ type?: string; data?: any }>(raw);
+  if (!parsed) {
     console.warn('[chat route] Failed to parse emitter event payload');
     return null;
   }
+
+  return parsed;
 };
 
 const handleEmitterEvents = async (

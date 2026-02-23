@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import { getSuggestions } from '../actions';
 import { MinimalProvider } from '../models/types';
 import { getAutoMediaSearch, getLanguage } from '../config/clientRegistry';
+import { parseLooseJson } from '../utils/json';
 
 export type Section = {
   userMessage: UserMessage;
@@ -811,10 +812,10 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         partialChunk = partialChunk.slice(lineBreakIndex + 1);
 
         if (raw) {
-          try {
-            const json = JSON.parse(raw);
+          const json = parseLooseJson<Record<string, any>>(raw);
+          if (json) {
             await messageHandler(json);
-          } catch (error) {
+          } else {
             console.warn('Failed to parse stream line:', raw.slice(0, 120));
           }
         }
@@ -825,10 +826,10 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
     const tail = partialChunk.trim();
     if (tail) {
-      try {
-        const json = JSON.parse(tail);
+      const json = parseLooseJson<Record<string, any>>(tail);
+      if (json) {
         await messageHandler(json);
-      } catch {
+      } else {
         console.warn('Dropping non-json stream tail');
       }
     }
