@@ -29,15 +29,6 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /home/perplexica
 
-COPY --from=builder /home/perplexica/public ./public
-COPY --from=builder /home/perplexica/.next/static ./public/_next/static
-COPY --from=builder /home/perplexica/.next/standalone ./
-COPY --from=builder /home/perplexica/data ./data
-COPY drizzle ./drizzle
-COPY scripts ./scripts
-
-RUN mkdir /home/perplexica/uploads
-
 RUN useradd --shell /bin/bash --system \
     --home-dir "/usr/local/searxng" \
     --comment 'Privacy-respecting metasearch engine' \
@@ -54,8 +45,10 @@ RUN chown -R searxng:searxng /etc/searxng
 
 USER searxng
 
-RUN git clone --depth 1 --single-branch "https://github.com/searxng/searxng" \
-                   "/usr/local/searxng/searxng-src"
+ARG SEARXNG_REF=master
+RUN mkdir -p "/usr/local/searxng/searxng-src" && \
+    curl -fsSL "https://codeload.github.com/searxng/searxng/tar.gz/${SEARXNG_REF}" | \
+      tar -xz -C "/usr/local/searxng/searxng-src" --strip-components=1
 
 RUN python3 -m venv "/usr/local/searxng/searx-pyenv"
 RUN "/usr/local/searxng/searx-pyenv/bin/pip" install --upgrade pip setuptools wheel pyyaml msgspec typing_extensions
@@ -65,6 +58,18 @@ RUN cd "/usr/local/searxng/searxng-src" && \
 USER root
 
 WORKDIR /home/perplexica
+
+# Copy app artifacts after SearXNG install so app-only changes don't force
+# rebuilding SearXNG layers (significantly speeds up iterative builds).
+COPY --from=builder /home/perplexica/public ./public
+COPY --from=builder /home/perplexica/.next/static ./public/_next/static
+COPY --from=builder /home/perplexica/.next/standalone ./
+COPY --from=builder /home/perplexica/data ./data
+COPY drizzle ./drizzle
+COPY scripts ./scripts
+
+RUN mkdir -p /home/perplexica/uploads
+
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 RUN sed -i 's/\r$//' ./entrypoint.sh || true

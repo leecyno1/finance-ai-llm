@@ -11,6 +11,7 @@ import ModelRegistry from '@/lib/models/registry';
 import { ModelWithProvider } from '@/lib/models/types';
 import { getClientIdFromHeaders } from '@/lib/server/client';
 import { parseLooseJson } from '@/lib/utils/json';
+import { sanitizeLlmOutput } from '@/lib/utils/llmOutput';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -93,6 +94,39 @@ const safeValidateBody = (data: unknown) => {
   };
 };
 
+const detectSummaryQuery = (query: string) =>
+  /^\s*summary\s*:/i.test(query) ||
+  (/https?:\/\//i.test(query) && /summary|summar|摘要|总结/i.test(query));
+
+const detectFinanceQuery = (query: string) =>
+  /股票|个股|A股|港股|美股|投资|投研|估值|目标价|买入|卖出|持仓|收益率|回撤|资产配置|组合|基金|期货|外汇|利率|债券|宏观|CPI|PPI|PMI/i.test(
+    query,
+  );
+
+const buildEffectiveSystemInstructions = (
+  query: string,
+  systemInstructions?: string | null,
+) => {
+  const isSummaryQuery = detectSummaryQuery(query);
+  const isFinanceQuery = detectFinanceQuery(query);
+
+  const extras: string[] = [];
+
+  if (isSummaryQuery) {
+    extras.push(
+      "你正在执行新闻URL摘要任务。只输出最终摘要，不要输出过程性描述、能力限制说明或自我对话（例如“我无法访问/浏览”“让我检查上下文/指令”等）。必须以“## 摘要”开头，不要在标题前输出任何文字。默认使用中文，并按以下结构：\n## 摘要\n## 核心要点\n## 可能影响。",
+    );
+  }
+
+  if (!isSummaryQuery && isFinanceQuery) {
+    extras.push(
+      '金融内容合规要求：仅做信息整理与研究框架/情景分析，不提供个性化投资建议；避免明确“买入/卖出/强烈推荐”等措辞；用数据与逻辑说明观点，并给出主要风险点与不确定性。',
+    );
+  }
+
+  return [systemInstructions || '', ...extras].filter(Boolean).join('\n');
+};
+
 const safeParseEventData = (raw: unknown) => {
   const parsed = parseLooseJson<{ type?: string; data?: any }>(raw);
   if (!parsed) {
@@ -109,8 +143,15 @@ const handleEmitterEvents = async (
   encoder: TextEncoder,
   chatId: string,
   owner: string,
+  summaryMode: boolean,
+  focusMode: string,
 ) => {
   let receivedMessage = '';
+  let rawMessage = '';
+  let emittedMessage = '';
+  let summaryTrimOffset: number | null = null;
+  let summaryPrefixed = false;
+  const summaryPrefix = '## 摘要\n\n';
   const aiMessageId = crypto.randomBytes(7).toString('hex');
 
   const safeWrite = (payload: Record<string, unknown>) => {
@@ -128,13 +169,36 @@ const handleEmitterEvents = async (
     if (!parsedData?.type) return;
 
     if (parsedData.type === 'response') {
-      safeWrite({
-        type: 'message',
-        data: parsedData.data,
-        messageId: aiMessageId,
-      });
+      const chunk = String(parsedData.data ?? '');
+      rawMessage += chunk;
 
-      receivedMessage += parsedData.data;
+      const cleaned = sanitizeLlmOutput(rawMessage);
+      let effective = cleaned;
+
+      if (summaryMode) {
+        if (summaryTrimOffset === null) {
+          const idx = effective.search(/(^|\n)##\s+/);
+          if (idx === -1) return; // wait until headings appear
+          summaryTrimOffset = idx === 0 ? 0 : idx + 1;
+        }
+        effective = effective.slice(summaryTrimOffset);
+        if (!summaryPrefixed && !effective.trimStart().startsWith('## 摘要')) {
+          effective = summaryPrefix + effective.trimStart();
+          summaryPrefixed = true;
+        }
+      }
+
+      const delta = effective.slice(emittedMessage.length);
+
+      if (delta) {
+        safeWrite({
+          type: 'message',
+          data: delta,
+          messageId: aiMessageId,
+        });
+        emittedMessage += delta;
+        receivedMessage = emittedMessage;
+      }
     } else if (parsedData.type === 'sources') {
       safeWrite({
         type: 'sources',
@@ -159,6 +223,58 @@ const handleEmitterEvents = async (
     }
   });
   stream.on('end', () => {
+    const finalClean = sanitizeLlmOutput(rawMessage);
+    let effective = finalClean;
+
+    if (summaryMode) {
+      if (summaryTrimOffset === null) {
+        const idx = effective.search(/(^|\n)##\s+/);
+        summaryTrimOffset = idx === -1 ? 0 : idx === 0 ? 0 : idx + 1;
+      }
+      effective = effective.slice(summaryTrimOffset);
+      if (!summaryPrefixed && !effective.trimStart().startsWith('## 摘要')) {
+        effective = summaryPrefix + effective.trimStart();
+        summaryPrefixed = true;
+      }
+    }
+
+    const tail = effective.slice(emittedMessage.length);
+
+    if (tail) {
+      safeWrite({
+        type: 'message',
+        data: tail,
+        messageId: aiMessageId,
+      });
+      emittedMessage += tail;
+    }
+
+    receivedMessage = emittedMessage;
+
+    if (!receivedMessage.trim()) {
+      if (summaryMode) {
+        receivedMessage =
+          '## 摘要\n未能获取页面正文内容。\n\n## 核心要点\n- 可能是页面反爬/超时/临时不可达。\n\n## 可能影响\n- 建议稍后重试，或换一个来源链接。';
+      } else if (focusMode === 'writingAssistant') {
+        receivedMessage =
+          '我可以先给你一个不依赖实时数据的分析框架（如需精确结论，请补充最新财务/估值/行业信息）：\n\n' +
+          '## 分析框架\n' +
+          '- 业务与护城河：核心产品/客户、议价能力、技术壁垒、竞争格局。\n' +
+          '- 财务质量：收入/毛利/净利趋势，现金流质量，应收与存货周转，费用率与研发投入。\n' +
+          '- 估值与预期：PE/PB/PS、同业对比、盈利预测与关键假设。\n' +
+          '- 风险清单：需求波动、价格战、政策/合规、客户集中、产能与库存、汇率与利率。\n\n' +
+          '你希望我分析的标的是哪一个（名称/代码）？以及你更关注“短线催化”还是“中长期基本面”？';
+      } else {
+        receivedMessage =
+          '抱歉，当前没有拿到可用检索结果。请稍后重试，或换一个关键词/来源再试。';
+      }
+      safeWrite({
+        type: 'message',
+        data: receivedMessage,
+        messageId: aiMessageId,
+      });
+    }
+
     safeWrite({
       type: 'messageEnd',
     });
@@ -316,6 +432,11 @@ export const POST = async (req: Request) => {
       );
     }
 
+    const effectiveSystemInstructions = buildEffectiveSystemInstructions(
+      message.content,
+      body.systemInstructions as string,
+    );
+
     const stream = await handler.searchAndAnswer(
       message.content,
       history,
@@ -323,14 +444,22 @@ export const POST = async (req: Request) => {
       embedding,
       body.optimizationMode,
       body.files,
-      body.systemInstructions as string,
+      effectiveSystemInstructions,
     );
 
     const responseStream = new TransformStream();
     const writer = responseStream.writable.getWriter();
     const encoder = new TextEncoder();
 
-    handleEmitterEvents(stream, writer, encoder, message.chatId, owner);
+    handleEmitterEvents(
+      stream,
+      writer,
+      encoder,
+      message.chatId,
+      owner,
+      detectSummaryQuery(message.content),
+      body.focusMode,
+    );
     handleHistorySave(message, humanMessageId, body.focusMode, body.files, owner);
 
     return new Response(responseStream.readable, {

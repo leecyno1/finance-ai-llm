@@ -1,7 +1,15 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { BookOpenText, Home, Search, Plus, Newspaper, Settings } from 'lucide-react';
+import {
+  BookOpenText,
+  Home,
+  Search,
+  Plus,
+  Newspaper,
+  Table2,
+  BriefcaseBusiness,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useSelectedLayoutSegments } from 'next/navigation';
 import React, { useEffect, useState, type ReactNode } from 'react';
@@ -17,7 +25,6 @@ const VerticalIconContainer = ({ children }: { children: ReactNode }) => {
 
 const Sidebar = ({ children }: { children: React.ReactNode }) => {
   const segments = useSelectedLayoutSegments();
-  const [isOpen, setIsOpen] = useState<boolean>(true);
   const [showSettings, setShowSettings] = useState<boolean>(() =>
     typeof window !== 'undefined'
       ? localStorage.getItem('showSettings') === 'true'
@@ -48,7 +55,6 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
       window.addEventListener('settings-button-revealed', updateSettingsVisible);
       window.addEventListener('storage', updateSettingsVisible);
 
-      // 初始化一次，确保跨标签页状态一致
       updateSettingsVisible();
     }
 
@@ -85,6 +91,18 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
       href: '/economy',
       active: segments.includes('economy'),
       label: t('Economy', '经济'),
+    },
+    {
+      icon: Table2,
+      href: '/event-impact',
+      active: segments.includes('event-impact'),
+      label: t('Impact', '矩阵'),
+    },
+    {
+      icon: BriefcaseBusiness,
+      href: '/portfolio-check',
+      active: segments.includes('portfolio-check'),
+      label: t('Portfolio', '体检'),
     },
     {
       icon: Newspaper,
@@ -158,25 +176,24 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
         </div>
       </div>
 
-      <div className="fixed bottom-0 w-full z-50 flex flex-row items-center gap-x-6 bg-light-secondary dark:bg-dark-secondary px-4 py-4 shadow-sm lg:hidden">
-        {navLinks.map((link, i) => (
-          <Link
-            href={link.href}
-            key={i}
-            className={cn(
-              'relative flex flex-col items-center space-y-1 text-center w-full',
-              link.active
-                ? 'text-black dark:text-white'
-                : 'text-black dark:text-white/70',
-            )}
-          >
-            {link.active && (
-              <div className="absolute top-0 -mt-4 h-1 w-full rounded-b-lg bg-black dark:bg-white" />
-            )}
-            <link.icon />
-            <p className="text-xs">{link.label}</p>
-          </Link>
-        ))}
+      <div className="fixed bottom-0 w-full z-50 bg-light-secondary dark:bg-dark-secondary px-2 py-2 shadow-sm lg:hidden overflow-x-auto">
+        <div className="flex flex-row items-center gap-x-1 min-w-max">
+          {navLinks.map((link, i) => (
+            <Link
+              href={link.href}
+              key={i}
+              className={cn(
+                'relative flex flex-col items-center justify-center text-center min-w-[58px] px-1 py-1 rounded-lg',
+                link.active
+                  ? 'text-black dark:text-white bg-light-200/70 dark:bg-dark-200/70'
+                  : 'text-black dark:text-white/70',
+              )}
+            >
+              <link.icon size={16} />
+              <p className="text-[10px] mt-0.5">{link.label}</p>
+            </Link>
+          ))}
+        </div>
       </div>
 
       <Layout>{children}</Layout>

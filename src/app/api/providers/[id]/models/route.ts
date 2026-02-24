@@ -1,12 +1,16 @@
 import ModelRegistry from '@/lib/models/registry';
 import { Model } from '@/lib/models/types';
 import { NextRequest } from 'next/server';
+import { requireAdmin } from '@/lib/server/adminAuth';
 
 export const POST = async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) => {
   try {
+    const authError = requireAdmin(req);
+    if (authError) return authError;
+
     const { id } = await params;
 
     const body: Partial<Model> & { type: 'embedding' | 'chat' } =
@@ -53,6 +57,9 @@ export const DELETE = async (
   { params }: { params: Promise<{ id: string }> },
 ) => {
   try {
+    const authError = requireAdmin(req);
+    if (authError) return authError;
+
     const { id } = await params;
 
     const body: { key: string; type: 'embedding' | 'chat' } = await req.json();

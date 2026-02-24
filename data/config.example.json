@@ -36,7 +36,8 @@
     }
   ],
   "search": {
-    "searxngURL": "http://localhost:8080"
+    "searxngURL": "http://localhost:8080",
+    "tavilyApiKey": "",
+    "tavilyMaxResults": 6
   }
 }
-

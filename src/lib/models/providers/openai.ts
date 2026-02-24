@@ -160,6 +160,9 @@ class OpenAIProvider extends BaseModelProvider<OpenAIConfig> {
       apiKey: this.config.apiKey,
       temperature: 0.7,
       model: key,
+      // Avoid hanging requests (some OpenAI-compatible providers can stall).
+      timeout: 30000,
+      maxRetries: 1,
       configuration: {
         baseURL: this.config.baseURL,
       },
@@ -179,6 +182,9 @@ class OpenAIProvider extends BaseModelProvider<OpenAIConfig> {
     return new OpenAIEmbeddings({
       apiKey: this.config.apiKey,
       model: key,
+      // Avoid hanging embedding calls as well.
+      timeout: 30000,
+      maxRetries: 1,
       configuration: {
         baseURL: this.config.baseURL,
       },

@@ -69,6 +69,7 @@ const state = {
   inFlightNews: false,
   inFlightEconomy: false,
   inFlightMacro: false,
+  inFlightEventImpact: false,
 };
 
 const waitForServer = async () => {
@@ -117,6 +118,26 @@ const warmEconomy = async (reason) => {
     console.warn('[cache-worker] economy failed:', err?.message || err);
   } finally {
     state.inFlightEconomy = false;
+  }
+};
+
+const warmEventImpact = async (reason) => {
+  if (state.inFlightEventImpact) return;
+  state.inFlightEventImpact = true;
+  const startedAt = Date.now();
+  try {
+    const res = await fetchWithTimeout(`${baseUrl}/api/finance/event-impact?limit=120`, 35_000);
+    const text = await res.text();
+    console.log(
+      `[cache-worker] event-impact ${reason} -> ${res.status} (${Date.now() - startedAt}ms)`,
+    );
+    if (!res.ok) {
+      console.warn('[cache-worker] event-impact response:', text.slice(0, 300));
+    }
+  } catch (err) {
+    console.warn('[cache-worker] event-impact failed:', err?.message || err);
+  } finally {
+    state.inFlightEventImpact = false;
   }
 };
 
@@ -181,14 +202,27 @@ const main = async () => {
   // Startup warm: ensures first public visit is cache-hit most of the time.
   await warmNews('startup');
   await warmEconomy('startup');
+  await warmEventImpact('startup');
 
   // News: strict 07:00 / 13:00 / 19:00 (Asia/Shanghai)
-  scheduleShanghaiDaily('news@07:00', { hour: 7, minute: 0 }, () => warmNews('slot@07:00'));
-  scheduleShanghaiDaily('news@13:00', { hour: 13, minute: 0 }, () => warmNews('slot@13:00'));
-  scheduleShanghaiDaily('news@19:00', { hour: 19, minute: 0 }, () => warmNews('slot@19:00'));
+  scheduleShanghaiDaily('news@07:00', { hour: 7, minute: 0 }, async () => {
+    await warmNews('slot@07:00');
+    await warmEventImpact('slot@07:00');
+  });
+  scheduleShanghaiDaily('news@13:00', { hour: 13, minute: 0 }, async () => {
+    await warmNews('slot@13:00');
+    await warmEventImpact('slot@13:00');
+  });
+  scheduleShanghaiDaily('news@19:00', { hour: 19, minute: 0 }, async () => {
+    await warmNews('slot@19:00');
+    await warmEventImpact('slot@19:00');
+  });
 
   // Economy market snapshot: keep rolling widgets fresh (10 minutes).
   scheduleEveryMs('economy@10m', 10 * 60 * 1000, () => warmEconomy('interval@10m'));
+
+  // Event impact matrix: keep this lightweight cache warm for public homepage/modules.
+  scheduleEveryMs('event-impact@10m', 10 * 60 * 1000, () => warmEventImpact('interval@10m'));
 
   // Macro: fixed 21:05 (Asia/Shanghai)
   scheduleShanghaiDaily('macro@21:05', { hour: 21, minute: 5 }, () => warmMacro());

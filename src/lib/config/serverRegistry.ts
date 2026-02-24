@@ -14,6 +14,16 @@ export const getConfiguredModelProviderById = (
 export const getSearxngURL = () =>
   configManager.getConfig('search.searxngURL', '');
 
+export const getTavilyApiKey = () =>
+  String(configManager.getConfig('search.tavilyApiKey', '') || '').trim();
+
+export const getTavilyMaxResults = () => {
+  const raw = configManager.getConfig('search.tavilyMaxResults', 6);
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 6;
+  return Math.max(1, Math.min(10, Math.floor(parsed)));
+};
+
 export const getTushareToken = () =>
   (() => {
     const raw = String(

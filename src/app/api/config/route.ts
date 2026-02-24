@@ -2,6 +2,7 @@ import configManager from '@/lib/config';
 import ModelRegistry from '@/lib/models/registry';
 import { NextRequest, NextResponse } from 'next/server';
 import { ConfigModelProvider } from '@/lib/config/types';
+import { requireAdmin } from '@/lib/server/adminAuth';
 
 type SaveConfigBody = {
   key: string;
@@ -22,7 +23,7 @@ export const GET = async (req: NextRequest) => {
 
         // Never expose provider secrets (API keys, URLs, etc.) to the client.
         // We only need to expose the available model lists; the actual
-        // provider config is kept server‑side in configManager.
+        // provider config is kept server-side in configManager.
         return {
           ...mp,
           // Strip config entirely so it cannot be leaked over the network.
@@ -37,6 +38,9 @@ export const GET = async (req: NextRequest) => {
     // Never expose non-model secrets (e.g. TuShare token) to the client.
     if (values.economy?.tushareToken) {
       values.economy.tushareToken = '********';
+    }
+    if (values.search?.tavilyApiKey) {
+      values.search.tavilyApiKey = '********';
     }
 
     return NextResponse.json({
@@ -54,6 +58,9 @@ export const GET = async (req: NextRequest) => {
 
 export const POST = async (req: NextRequest) => {
   try {
+    const authError = requireAdmin(req);
+    if (authError) return authError;
+
     const body: SaveConfigBody = await req.json();
 
     if (!body.key || body.value === undefined) {

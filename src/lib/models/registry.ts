@@ -30,7 +30,7 @@ class ModelRegistry {
         });
       } catch (err) {
         console.error(
-          `Failed to initialize provider. Type: ${p.type}, ID: ${p.id}, Config: ${JSON.stringify(p.config)}, Error: ${err}`,
+          `Failed to initialize provider. Type: ${p.type}, ID: ${p.id}, Error: ${err}`,
         );
       }
     });

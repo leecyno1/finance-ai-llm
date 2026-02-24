@@ -18,12 +18,14 @@ import LineOutputParser from '../outputParsers/lineOutputParser';
 import { getDocumentsFromLinks } from '../utils/documents';
 import { Document } from '@langchain/core/documents';
 import { searchSearxng } from '../searxng';
+import { searchTavily } from '../tavily';
 import path from 'node:path';
 import fs from 'node:fs';
 import computeSimilarity from '../utils/computeSimilarity';
 import formatChatHistoryAsString from '../utils/formatHistory';
 import eventEmitter from 'events';
 import { StreamEvent } from '@langchain/core/tracers/log_stream';
+import { sanitizeLlmOutput } from '../utils/llmOutput';
 
 export interface MetaSearchAgentType {
   searchAndAnswer: (
@@ -53,6 +55,100 @@ type BasicChainInput = {
 };
 
 const MAX_LINKS_PER_SEARCH = 3;
+const MAX_WEB_DOCS = 12;
+const MAX_FINANCE_MARKET_ROWS = 60;
+const MAX_FINANCE_MACRO_ROWS = 120;
+const MAX_FINANCE_NEWS_ROWS = 40;
+
+const FINANCE_QUERY_RE =
+  /股票|个股|A股|港股|美股|欧股|日股|投资|投研|估值|目标价|买入|卖出|持仓|收益率|回撤|资产配置|组合|基金|期货|外汇|利率|债券|宏观|CPI|PPI|PMI|GDP|非农|社融|信贷|财政|国债|美债|reits|commodit|bond|yield|equity|fx|macro|earnings|valuation/i;
+
+const extractUrlsFromText = (text: string) => {
+  const urls = Array.from(
+    new Set((text.match(/https?:\/\/[^\s<>()]+/gi) ?? []).map((u) => u.trim())),
+  )
+    .map((u) => u.replace(/[)\].,;]+$/g, ''))
+    .filter((u) => u.length > 8);
+
+  return urls;
+};
+
+const detectFinanceQuery = (query: string) => FINANCE_QUERY_RE.test(query);
+
+const normalizeDocDedupKey = (doc: Document) => {
+  const url = String(doc.metadata?.url ?? '').trim().toLowerCase();
+  if (url) return `url:${url}`;
+  const title = String(doc.metadata?.title ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  return `title:${title}`;
+};
+
+const dedupeDocs = (docs: Document[], max = MAX_WEB_DOCS) => {
+  const seen = new Set<string>();
+  const output: Document[] = [];
+
+  for (const doc of docs) {
+    const key = normalizeDocDedupKey(doc);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(doc);
+    if (output.length >= max) break;
+  }
+
+  return output;
+};
+
+const isUrlSummaryQuery = (query: string) =>
+  /^\s*summary\s*:/i.test(query) ||
+  (/https?:\/\//i.test(query) && /summary|summar|摘要|总结/i.test(query));
+
+const buildDeterministicUrlSummary = (docs: Document[]) => {
+  const title = String(docs?.[0]?.metadata?.title ?? '').trim() || '网页摘要';
+  const combined = docs.map((d) => d.pageContent || '').join('\n');
+  const text = combined.replace(/\s+/g, ' ').trim();
+
+  const items: string[] = [];
+
+  // Try to extract enumerated Chinese list items (e.g. "1、... 2、...").
+  for (const m of text.matchAll(
+    /(\d{1,2})[、.．]\s*([\s\S]{5,220}?)(?=(?:\s*\d{1,2}[、.．]\s*)|$)/g,
+  )) {
+    const item = String(m[2] ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/[;；。\.]+$/g, '');
+    if (!item) continue;
+    // Drop obvious boilerplate.
+    if (/免责声明|风险提示|不承担任何责任/i.test(item)) continue;
+    items.push(item);
+    if (items.length >= 15) break;
+  }
+
+  const bullets =
+    items.length > 0
+      ? items.slice(0, 12).map((t) => `- ${t}`).join('\n')
+      : (() => {
+          const sentences = text
+            .split(/[。！？；;]+/g)
+            .map((s) => s.trim())
+            .filter((s) => s.length >= 12 && s.length <= 120)
+            .filter((s) => !/免责声明|风险提示|不承担任何责任/i.test(s));
+          const uniq = Array.from(new Set(sentences)).slice(0, 10);
+          return uniq.length
+            ? uniq.map((t) => `- ${t}`).join('\n')
+            : '- 未能从页面抽取到足够正文。';
+        })();
+
+  return (
+    `## 摘要\n\n${title}（基于页面正文自动抽取与归纳）。\n\n` +
+    `## 核心要点\n\n${bullets}\n\n` +
+    `## 可能影响\n\n` +
+    `- 如涉及宏观/政策/地缘事件，可能影响风险偏好与相关行业板块定价。\n` +
+    `- 建议结合更多来源交叉验证，并关注后续数据/公告更新。\n`
+  );
+};
 
 class MetaSearchAgent implements MetaSearchAgentType {
   private config: Config;
@@ -60,6 +156,202 @@ class MetaSearchAgent implements MetaSearchAgentType {
 
   constructor(config: Config) {
     this.config = config;
+  }
+
+  private readJsonFile<T>(filePath: string): T | null {
+    try {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  private buildHardFallbackAnswer(query: string) {
+    const isFinance = detectFinanceQuery(query);
+
+    if (isFinance) {
+      return (
+        '## 当前状态\n' +
+        '- 本次模型生成中断，已启用硬兜底输出。\n\n' +
+        '## 先给你可执行框架\n' +
+        '- **结论模板**：先写“核心结论（一句话）→ 驱动因子（3条）→ 反证条件（2条）”。\n' +
+        '- **必看数据**：估值（PE/PB/EV-EBITDA）、盈利预期（未来4季）、现金流、利率与风险溢价。\n' +
+        '- **情景推演**：基准/乐观/悲观三情景，分别给出关键假设和估值区间。\n' +
+        '- **风险控制**：列出触发止损或降权重的客观条件（如盈利下修、政策变化、信用利差走阔）。\n\n' +
+        '## 你可以直接补充这3项，我会继续产出完整投研结论\n' +
+        '- 1) 标的代码/资产名称\n' +
+        '- 2) 投资期限（短线/中线/长期）\n' +
+        '- 3) 你最关注的维度（估值/基本面/交易拥挤度/宏观）\n'
+      );
+    }
+
+    return (
+      '## 当前状态\n' +
+      '- 本次生成被中断，已触发回答兜底。\n\n' +
+      '## 建议下一步\n' +
+      '- 换一个更具体的关键词（可加时间、地点、主体）。\n' +
+      '- 如果是链接摘要，请直接贴原文链接并加“Summary:”。\n' +
+      '- 如需我重试，请回复“重试并缩短答案”。\n'
+    );
+  }
+
+  private buildFinanceBypassDocs(query: string): Document[] {
+    const dataRoot = process.env.DATA_DIR || process.cwd();
+    const economyPath = path.join(dataRoot, 'data/economy-cache.json');
+    const newsPath = path.join(dataRoot, 'data/news-cache.json');
+
+    const economy = this.readJsonFile<{
+      data?: { market?: any[]; macro?: any[] };
+      updatedAt?: number;
+      marketUpdatedAt?: number;
+      macroUpdatedAt?: number;
+    }>(economyPath);
+    const news = this.readJsonFile<{
+      updatedAt?: string;
+      items?: Array<{
+        title?: string;
+        source?: string;
+        datetime?: string;
+        publishTime?: string;
+        url?: string;
+        sourceUrl?: string;
+      }>;
+    }>(newsPath);
+
+    const market = Array.isArray(economy?.data?.market) ? economy!.data!.market! : [];
+    const macro = Array.isArray(economy?.data?.macro) ? economy!.data!.macro! : [];
+    const newsItems = Array.isArray(news?.items) ? news!.items! : [];
+
+    const queryLower = query.toLowerCase();
+    const marketFiltered = market.filter((m) => {
+      const text = `${m?.id ?? ''} ${m?.name ?? ''} ${m?.region ?? ''}`.toLowerCase();
+      return !queryLower || text.includes(queryLower) || queryLower.includes(String(m?.id ?? '').toLowerCase());
+    });
+    const macroFiltered = macro.filter((m) => {
+      const text = `${m?.id ?? ''} ${m?.name ?? ''} ${m?.region ?? ''}`.toLowerCase();
+      return !queryLower || text.includes(queryLower);
+    });
+
+    const marketRows = (marketFiltered.length ? marketFiltered : market)
+      .slice(0, MAX_FINANCE_MARKET_ROWS)
+      .map((m) =>
+        `- ${m.name} (${m.id}, ${m.region}) 最新=${m.close ?? '--'}${m.unit ?? ''} 变动=${Number.isFinite(Number(m.pct_chg)) ? Number(m.pct_chg).toFixed(2) + '%' : '--'} 日期=${m.trade_date ?? '--'}`,
+      )
+      .join('\n');
+
+    const macroRows = (macroFiltered.length ? macroFiltered : macro)
+      .slice(0, MAX_FINANCE_MACRO_ROWS)
+      .map((m) =>
+        `- ${m.name} (${m.id}, ${m.region}) 最新=${m.value ?? '--'}${m.unit ?? ''} 上期=${m.prev_value ?? '--'}${m.unit ?? ''} 频率=${m.frequency ?? '--'} 期次=${m.period ?? '--'}`,
+      )
+      .join('\n');
+
+    const newsRows = newsItems
+      .slice(0, MAX_FINANCE_NEWS_ROWS)
+      .map((item) => {
+        const rawTime = item.datetime || item.publishTime;
+        const when = rawTime ? new Date(rawTime).toISOString() : '--';
+        const title = String(item.title ?? '').trim() || '未命名快讯';
+        const source = String(item.source ?? '').trim() || '未知来源';
+        const link = String(item.url || item.sourceUrl || '').trim() || '--';
+        return `- ${title} | 来源=${source} | 时间=${when} | 链接=${link}`;
+      })
+      .join('\n');
+
+    const docs: Document[] = [];
+
+    if (marketRows) {
+      docs.push(
+        new Document({
+          pageContent:
+            `金融直连数据（市场快照）。更新时间：${new Date(
+              economy?.marketUpdatedAt || economy?.updatedAt || Date.now(),
+            ).toISOString()}\n` + marketRows,
+          metadata: {
+            title: '金融数据直连：市场快照',
+            url: 'local://economy-cache/market',
+          },
+        }),
+      );
+    }
+
+    if (macroRows) {
+      docs.push(
+        new Document({
+          pageContent:
+            `金融直连数据（宏观指标）。更新时间：${new Date(
+              economy?.macroUpdatedAt || economy?.updatedAt || Date.now(),
+            ).toISOString()}\n` + macroRows,
+          metadata: {
+            title: '金融数据直连：宏观指标',
+            url: 'local://economy-cache/macro',
+          },
+        }),
+      );
+    }
+
+    if (newsRows) {
+      docs.push(
+        new Document({
+          pageContent:
+            `金融快讯（本地缓存，按时间倒序）。更新时间：${news?.updatedAt ?? '--'}\n` +
+            newsRows,
+          metadata: {
+            title: '金融数据直连：财经快讯',
+            url: 'local://news-cache/top',
+          },
+        }),
+      );
+    }
+
+    return docs;
+  }
+
+  private async fetchWebDocsHybrid(question: string): Promise<Document[]> {
+    const query = question.trim().slice(0, 500);
+    if (!query) return [];
+
+    const useTavily = this.config.activeEngines.length === 0;
+
+    const [tavilyRes, searxRes] = await Promise.all([
+      useTavily ? searchTavily(query, { topic: 'news' }) : Promise.resolve({ results: [] }),
+      searchSearxng(query, {
+        language: 'en',
+        engines: this.config.activeEngines,
+      }),
+    ]);
+
+    const docsFromTavily = tavilyRes.results.map(
+      (result) =>
+        new Document({
+          pageContent: result.content || result.title,
+          metadata: {
+            title: result.title,
+            url: result.url,
+            ...(result.img_src ? { img_src: result.img_src } : {}),
+            source: 'tavily',
+          },
+        }),
+    );
+
+    const docsFromSearxng = searxRes.results.map(
+      (result) =>
+        new Document({
+          pageContent:
+            result.content ||
+            (this.config.activeEngines.includes('youtube')
+              ? result.title
+              : ''),
+          metadata: {
+            title: result.title,
+            url: result.url,
+            ...(result.img_src ? { img_src: result.img_src } : {}),
+            source: 'searxng',
+          },
+        }),
+    );
+
+    return dedupeDocs([...docsFromTavily, ...docsFromSearxng], MAX_WEB_DOCS);
   }
 
   private async createSearchRetrieverChain(llm: BaseChatModel) {
@@ -93,8 +385,28 @@ class MetaSearchAgent implements MetaSearchAgentType {
           key: 'question',
         });
 
-        const links = await linksOutputParser.parse(input);
-        let question = (await questionOutputParser.parse(input)) ?? input;
+        const cleanedInput = sanitizeLlmOutput(input);
+        const links = await linksOutputParser.parse(cleanedInput);
+        let question = (await questionOutputParser.parse(cleanedInput)) ?? '';
+
+        if (!question) {
+          const queryTag =
+            cleanedInput.match(/<query>\s*([\s\S]*?)\s*<\/query>/i)?.[1] ??
+            '';
+          question = queryTag || cleanedInput;
+        }
+
+        question = question.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+        if (/tool\s*=>|args\s*=>/i.test(question)) {
+          const queryTag =
+            cleanedInput.match(/<query>\s*([\s\S]*?)\s*<\/query>/i)?.[1] ??
+            '';
+          if (queryTag.trim()) {
+            question = queryTag.trim();
+          }
+        }
+
         const limitedLinks = Array.from(
           new Set(
             links
@@ -103,12 +415,11 @@ class MetaSearchAgent implements MetaSearchAgentType {
           ),
         ).slice(0, MAX_LINKS_PER_SEARCH);
 
-        question = question.replace(/<think>.*?<\/think>/gs, '').trim();
         if (question.length > 500) {
           question = question.slice(0, 500);
         }
 
-        if (question === 'not_needed') {
+        if (!question || question.toLowerCase() === 'not_needed') {
           return { query: '', docs: [] };
         }
 
@@ -230,36 +541,16 @@ class MetaSearchAgent implements MetaSearchAgentType {
 
           return { query: question, docs: docs };
         } else {
-          question = question.replace(/<think>.*?<\/think>/g, '');
-
-          let res;
           try {
-            res = await searchSearxng(question, {
-              language: 'en',
-              engines: this.config.activeEngines,
-            });
+            const docs = await this.fetchWebDocsHybrid(question);
+            return { query: question, docs };
           } catch (err) {
-            console.error('[metaSearchAgent] searxng search failed, fallback to empty docs', err);
+            console.error(
+              '[metaSearchAgent] hybrid web search failed, fallback to empty docs',
+              err,
+            );
             return { query: question, docs: [] };
           }
-
-          const documents = res.results.map(
-            (result) =>
-              new Document({
-                pageContent:
-                  result.content ||
-                  (this.config.activeEngines.includes('youtube')
-                    ? result.title
-                    : '') /* Todo: Implement transcript grabbing using Youtubei (source: https://www.npmjs.com/package/youtubei) */,
-                metadata: {
-                  title: result.title,
-                  url: result.url,
-                  ...(result.img_src && { img_src: result.img_src }),
-                },
-              }),
-          );
-
-          return { query: question, docs: documents };
         }
       }),
     ]);
@@ -287,16 +578,47 @@ class MetaSearchAgent implements MetaSearchAgentType {
           let query = input.query;
 
           if (this.config.searchWeb) {
-            const searchRetrieverChain =
-              await this.createSearchRetrieverChain(llm);
+            const urls = extractUrlsFromText(query);
+            const wantsSummary = urls.length > 0 && isUrlSummaryQuery(query);
 
-            const searchRetrieverResult = await searchRetrieverChain.invoke({
-              chat_history: processedHistory,
-              query,
-            });
+            if (wantsSummary) {
+              // Deterministic URL summary: fetch link content directly instead of relying on
+              // the model to output a <links> block (some providers are inconsistent).
+              docs = await getDocumentsFromLinks({
+                links: urls.slice(0, MAX_LINKS_PER_SEARCH),
+              });
+            } else {
+              try {
+                const searchRetrieverChain =
+                  await this.createSearchRetrieverChain(llm);
 
-            query = searchRetrieverResult.query;
-            docs = searchRetrieverResult.docs;
+                const searchRetrieverResult = await searchRetrieverChain.invoke({
+                  chat_history: processedHistory,
+                  query,
+                });
+
+                query = searchRetrieverResult.query;
+                docs = searchRetrieverResult.docs;
+              } catch (err) {
+                // If query rewriting fails (provider timeout/safety), fallback to direct search.
+                console.error(
+                  '[metaSearchAgent] retriever chain failed, fallback to direct search',
+                  err,
+                );
+                docs = await this.fetchWebDocsHybrid(query);
+              }
+            }
+
+            // Finance queries should still use real-time web retrieval first.
+            // Local cache only supplements context (or serves as fallback when web docs are empty).
+            if (detectFinanceQuery(query)) {
+              const localFinanceDocs = this.buildFinanceBypassDocs(query);
+              if (!docs || docs.length === 0) {
+                docs = localFinanceDocs;
+              } else if (localFinanceDocs.length > 0) {
+                docs = [...docs, ...localFinanceDocs];
+              }
+            }
           }
 
           const sortedDocs = await this.rerankDocs(
@@ -474,32 +796,84 @@ class MetaSearchAgent implements MetaSearchAgentType {
   private async handleStream(
     stream: AsyncGenerator<StreamEvent, any, any>,
     emitter: eventEmitter,
+    opts?: { summaryMode?: boolean; summaryUrls?: string[]; query?: string },
   ) {
-    for await (const event of stream) {
-      if (
-        event.event === 'on_chain_end' &&
-        event.name === 'FinalSourceRetriever'
-      ) {
+    const summaryMode = Boolean(opts?.summaryMode);
+    const summaryUrls = opts?.summaryUrls ?? [];
+    const query = opts?.query ?? '';
+
+    try {
+      for await (const event of stream) {
+        if (
+          event.event === 'on_chain_end' &&
+          event.name === 'FinalSourceRetriever'
+        ) {
+          emitter.emit(
+            'data',
+            JSON.stringify({ type: 'sources', data: event.data.output }),
+          );
+        }
+        if (
+          event.event === 'on_chain_stream' &&
+          event.name === 'FinalResponseGenerator'
+        ) {
+          emitter.emit(
+            'data',
+            JSON.stringify({ type: 'response', data: event.data.chunk }),
+          );
+        }
+        if (
+          event.event === 'on_chain_end' &&
+          event.name === 'FinalResponseGenerator'
+        ) {
+          emitter.emit('end');
+        }
+      }
+    } catch (err: any) {
+      // Some providers (e.g. safety filters) may abort streaming without emitting a final
+      // event. Always end the stream so API handlers don't hang.
+      if (summaryMode && summaryUrls.length > 0) {
+        try {
+          const docs = await getDocumentsFromLinks({
+            links: summaryUrls.slice(0, MAX_LINKS_PER_SEARCH),
+          });
+          const raw = docs
+            .map((d) => d.pageContent)
+            .join('\n')
+            .slice(0, 12000);
+          const normalized = raw.replace(/\s+/g, ' ').trim();
+          const sentences = normalized
+            .split(/[。！？\n]+/)
+            .map((s) => s.trim())
+            .filter((s) => s.length >= 10);
+          const points = Array.from(new Set(sentences)).slice(0, 12);
+
+          const bullet = points.length
+            ? points.map((p) => `- ${p}`).join('\n')
+            : '- 未能从页面抽取到足够正文。';
+
+          emitter.emit(
+            'data',
+            JSON.stringify({
+              type: 'response',
+              data:
+                `## 摘要\n模型生成被拦截或中断，以下为基于网页抽取文本的简要提要（可能不完整）。\n\n` +
+                `## 核心要点\n${bullet}\n\n` +
+                `## 可能影响\n- 建议结合市场数据与更多来源交叉验证。\n`,
+            }),
+          );
+        } catch {}
+      } else {
         emitter.emit(
           'data',
-          JSON.stringify({ type: 'sources', data: event.data.output }),
+          JSON.stringify({
+            type: 'response',
+            data: this.buildHardFallbackAnswer(query),
+          }),
         );
       }
-      if (
-        event.event === 'on_chain_stream' &&
-        event.name === 'FinalResponseGenerator'
-      ) {
-        emitter.emit(
-          'data',
-          JSON.stringify({ type: 'response', data: event.data.chunk }),
-        );
-      }
-      if (
-        event.event === 'on_chain_end' &&
-        event.name === 'FinalResponseGenerator'
-      ) {
-        emitter.emit('end');
-      }
+
+      emitter.emit('end');
     }
   }
 
@@ -513,6 +887,52 @@ class MetaSearchAgent implements MetaSearchAgentType {
     systemInstructions: string,
   ) {
     const emitter = new eventEmitter();
+
+    const urls = extractUrlsFromText(message);
+    const wantsSummary = urls.length > 0 && isUrlSummaryQuery(message);
+
+    // URL summary is a product-critical path (clicking a news item). Some providers
+    // are prone to meta narration; do a deterministic summary to guarantee usefulness.
+    if (wantsSummary) {
+      // Important: emit asynchronously so the caller has time to attach listeners.
+      void (async () => {
+        try {
+          const docs = await getDocumentsFromLinks({
+            links: urls.slice(0, MAX_LINKS_PER_SEARCH),
+          });
+          emitter.emit(
+            'data',
+            JSON.stringify({
+              type: 'sources',
+              data: docs.map((d) => ({
+                pageContent: d.pageContent,
+                metadata: d.metadata,
+              })),
+            }),
+          );
+          emitter.emit(
+            'data',
+            JSON.stringify({
+              type: 'response',
+              data: buildDeterministicUrlSummary(docs),
+            }),
+          );
+        } catch (err) {
+          emitter.emit(
+            'data',
+            JSON.stringify({
+              type: 'response',
+              data:
+                '## 摘要\n\n未能获取页面正文内容。\n\n## 核心要点\n- 可能是页面反爬/超时/临时不可达。\n\n## 可能影响\n- 建议稍后重试，或换一个来源链接。\n',
+            }),
+          );
+        } finally {
+          emitter.emit('end');
+        }
+      })();
+
+      return emitter;
+    }
 
     const answeringChain = await this.createAnsweringChain(
       llm,
@@ -532,7 +952,11 @@ class MetaSearchAgent implements MetaSearchAgentType {
       },
     );
 
-    this.handleStream(stream, emitter);
+    void this.handleStream(stream, emitter, {
+      summaryMode: false,
+      summaryUrls: [],
+      query: message,
+    });
 
     return emitter;
   }

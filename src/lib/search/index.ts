@@ -1,7 +1,9 @@
-import MetaSearchAgent from '@/lib/search/metaSearchAgent';
+import MetaSearchAgent, { MetaSearchAgentType } from '@/lib/search/metaSearchAgent';
 import prompts from '../prompts';
+import EventImpactSearchHandler from './handlers/eventImpactSearch';
+import PortfolioCheckSearchHandler from './handlers/portfolioCheckSearch';
 
-export const searchHandlers: Record<string, MetaSearchAgent> = {
+export const searchHandlers: Record<string, MetaSearchAgentType> = {
   webSearch: new MetaSearchAgent({
     activeEngines: [],
     queryGeneratorPrompt: prompts.webSearchRetrieverPrompt,
@@ -56,4 +58,6 @@ export const searchHandlers: Record<string, MetaSearchAgent> = {
     rerankThreshold: 0.3,
     searchWeb: true,
   }),
+  eventImpactMatrix: new EventImpactSearchHandler(),
+  portfolioCheck: new PortfolioCheckSearchHandler(),
 };

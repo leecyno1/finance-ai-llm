@@ -122,8 +122,11 @@ const checkConfig = async (
       );
     }
 
+    const preferredChatModelProvider = providers.find(
+      (p) => p.id === chatModelProviderId && p.chatModels.length > 0,
+    );
     const chatModelProvider =
-      providers.find((p) => p.id === chatModelProviderId) ??
+      preferredChatModelProvider ??
       providers.find((p) => p.chatModels.length > 0);
 
     if (!chatModelProvider) {
@@ -139,8 +142,12 @@ const checkConfig = async (
       chatModelProvider.chatModels[0];
     chatModelKey = chatModel.key;
 
+    const preferredEmbeddingModelProvider = providers.find(
+      (p) =>
+        p.id === embeddingModelProviderId && p.embeddingModels.length > 0,
+    );
     const embeddingModelProvider =
-      providers.find((p) => p.id === embeddingModelProviderId) ??
+      preferredEmbeddingModelProvider ??
       providers.find((p) => p.embeddingModels.length > 0);
 
     if (!embeddingModelProvider) {

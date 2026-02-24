@@ -18,6 +18,8 @@ class ConfigManager {
     modelProviders: [],
     search: {
       searxngURL: '',
+      tavilyApiKey: '',
+      tavilyMaxResults: '',
     },
     economy: {
       tushareToken: '',
@@ -116,6 +118,29 @@ class ConfigManager {
         scope: 'server',
         env: 'SEARXNG_API_URL',
       },
+      {
+        name: 'Tavily API Key',
+        key: 'tavilyApiKey',
+        type: 'password',
+        required: false,
+        description:
+          'Tavily 检索密钥（用于混合检索，服务端保存，不会返回到浏览器）。',
+        placeholder: 'tvly-...',
+        default: '',
+        scope: 'server',
+        env: 'TAVILY_API_KEY',
+      },
+      {
+        name: 'Tavily Max Results',
+        key: 'tavilyMaxResults',
+        type: 'string',
+        required: false,
+        description: '每次 Tavily 检索返回条数（建议 4-10）。',
+        placeholder: '6',
+        default: '6',
+        scope: 'server',
+        env: 'TAVILY_MAX_RESULTS',
+      },
     ],
     economy: [
       {
@@ -192,8 +217,18 @@ class ConfigManager {
     config.personalization = config.personalization ?? {};
     config.modelProviders = config.modelProviders ?? [];
 
-    config.search = config.search ?? { searxngURL: '' };
+    config.search = config.search ?? {
+      searxngURL: '',
+      tavilyApiKey: '',
+      tavilyMaxResults: 6,
+    };
     config.search.searxngURL = config.search.searxngURL ?? '';
+    config.search.tavilyApiKey = config.search.tavilyApiKey ?? '';
+    const parsedMaxResults = Number(config.search.tavilyMaxResults);
+    config.search.tavilyMaxResults =
+      Number.isFinite(parsedMaxResults) && parsedMaxResults > 0
+        ? Math.floor(parsedMaxResults)
+        : 6;
 
     config.economy = config.economy ?? { tushareToken: '' };
     config.economy.tushareToken = config.economy.tushareToken ?? '';
