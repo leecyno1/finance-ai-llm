@@ -5,9 +5,11 @@ import db from '@/lib/db';
 import { chats, messages as messagesSchema } from '@/lib/db/schema';
 import { and, eq, gt } from 'drizzle-orm';
 import { getFileDetails } from '@/lib/utils/files';
-import { searchHandlers } from '@/lib/search';
+import { getSearchHandlerCapabilities, searchHandlers } from '@/lib/search';
+import ApiSearchAgent from '@/lib/search/apiSearchAgent';
 import { z } from 'zod';
 import ModelRegistry from '@/lib/models/registry';
+import { loadRoutedChatModel, loadRoutedEmbeddingModel } from '@/lib/models/modelRouting';
 import { ModelWithProvider } from '@/lib/models/types';
 import { getClientIdFromHeaders } from '@/lib/server/client';
 import { parseLooseJson } from '@/lib/utils/json';
@@ -137,6 +139,32 @@ const safeParseEventData = (raw: unknown) => {
   return parsed;
 };
 
+const persistStatusMessages = async (
+  owner: string,
+  chatId: string,
+  statuses: string[],
+) => {
+  const normalized = statuses
+    .map((s) => String(s || '').trim())
+    .filter(Boolean);
+
+  if (normalized.length === 0) return;
+
+  await db
+    .insert(messagesSchema)
+    .values(
+      normalized.map((status, index) => ({
+        owner,
+        chatId,
+        messageId: `${crypto.randomBytes(7).toString('hex')}-status-${index + 1}`,
+        role: 'status' as const,
+        content: status,
+        createdAt: new Date().toString(),
+      })),
+    )
+    .execute();
+};
+
 const handleEmitterEvents = async (
   stream: EventEmitter,
   writer: WritableStreamDefaultWriter,
@@ -149,6 +177,7 @@ const handleEmitterEvents = async (
   let receivedMessage = '';
   let rawMessage = '';
   let emittedMessage = '';
+  const persistedStatuses: string[] = [];
   let summaryTrimOffset: number | null = null;
   let summaryPrefixed = false;
   const summaryPrefix = '## 摘要\n\n';
@@ -162,6 +191,21 @@ const handleEmitterEvents = async (
 
   const safeClose = () => {
     writer.close().catch(() => {});
+  };
+
+  const pushStatus = (text: string) => {
+    const statusText = String(text || '').trim();
+    if (!statusText) return;
+
+    if (persistedStatuses[persistedStatuses.length - 1] !== statusText) {
+      persistedStatuses.push(statusText);
+    }
+
+    safeWrite({
+      type: 'status',
+      data: statusText,
+      messageId: aiMessageId,
+    });
   };
 
   stream.on('data', (data) => {
@@ -220,6 +264,17 @@ const handleEmitterEvents = async (
         })
         .execute()
         .catch(() => {});
+    } else if (parsedData.type === 'searchResults') {
+      const count = Array.isArray(parsedData.data) ? parsedData.data.length : 0;
+      pushStatus(
+        count > 0
+          ? `已筛选 ${count} 条检索结果`
+          : '已完成检索结果整理',
+      );
+    } else if (parsedData.type === 'researchComplete') {
+      pushStatus('研究过程完成，正在生成回答...');
+    } else if (parsedData.type === 'status') {
+      pushStatus(String(parsedData.data ?? ''));
     }
   });
   stream.on('end', () => {
@@ -280,6 +335,10 @@ const handleEmitterEvents = async (
     });
     safeClose();
 
+    void persistStatusMessages(owner, chatId, persistedStatuses).catch((err) => {
+      console.error('Failed to persist status messages:', err);
+    });
+
     void db
       .insert(messagesSchema)
       .values({
@@ -300,6 +359,9 @@ const handleEmitterEvents = async (
       data: parsedData?.data ?? 'stream_error',
     });
     safeClose();
+    void persistStatusMessages(owner, chatId, persistedStatuses).catch((err) => {
+      console.error('Failed to persist status messages after stream error:', err);
+    });
   });
 };
 
@@ -396,16 +458,6 @@ export const POST = async (req: Request) => {
       );
     }
 
-    const registry = new ModelRegistry();
-
-    const [llm, embedding] = await Promise.all([
-      registry.loadChatModel(body.chatModel.providerId, body.chatModel.key),
-      registry.loadEmbeddingModel(
-        body.embeddingModel.providerId,
-        body.embeddingModel.key,
-      ),
-    ]);
-
     const humanMessageId =
       message.messageId ?? crypto.randomBytes(7).toString('hex');
 
@@ -432,20 +484,44 @@ export const POST = async (req: Request) => {
       );
     }
 
+    const handlerCapabilities = getSearchHandlerCapabilities(body.focusMode);
+    const registry = new ModelRegistry();
+    let llm: Awaited<ReturnType<ModelRegistry['loadChatModel']>> | null = null;
+    let embedding:
+      | Awaited<ReturnType<ModelRegistry['loadEmbeddingModel']>>
+      | null = null;
+
+    if (handlerCapabilities.requiresModels) {
+      [llm, embedding] = await Promise.all([
+        loadRoutedChatModel(
+          registry,
+          body.focusMode,
+          body.optimizationMode,
+          body.chatModel,
+        ),
+        loadRoutedEmbeddingModel(registry, body.embeddingModel),
+      ]);
+    }
+
     const effectiveSystemInstructions = buildEffectiveSystemInstructions(
       message.content,
       body.systemInstructions as string,
     );
 
-    const stream = await handler.searchAndAnswer(
-      message.content,
+    const stream = await new ApiSearchAgent(
+      body.focusMode,
+      handler,
+    ).searchAndAnswer({
+      focusMode: body.focusMode,
+      message: message.content,
       history,
+      handler,
       llm,
-      embedding,
-      body.optimizationMode,
-      body.files,
-      effectiveSystemInstructions,
-    );
+      embeddings: embedding,
+      optimizationMode: body.optimizationMode,
+      fileIds: body.files,
+      systemInstructions: effectiveSystemInstructions,
+    });
 
     const responseStream = new TransformStream();
     const writer = responseStream.writable.getWriter();

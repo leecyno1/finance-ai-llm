@@ -85,7 +85,7 @@ ClawCloud Run 通常支持“从 Git 仓库自动构建并部署 Docker 镜像�
 ### 看日志定位问题
 优先检查：
 
-- **启动日志**：是否打印了 `Starting SearXNG...`、`Starting Dr.Lemon...`
+- **启动日志**：是否打印了 `Starting SearXNG...`、`Starting 大圣之怒...`
 - **端口监听**：平台是否要求显式设置 `PORT`（如果需要，可在环境变量里设置 `PORT=3000`）
 - **SearXNG 健康**：日志里如果出现 health check timeout，通常不影响主服务；但如果检索失败，请确认 `SEARXNG_API_URL` 是否是 `http://localhost:8080`
 

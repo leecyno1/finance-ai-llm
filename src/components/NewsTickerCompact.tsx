@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { getLanguage } from '@/lib/config/clientRegistry';
+import { buildSummaryHref } from '@/lib/utils/newsSummaryHref';
 
 type NewsItem = {
   title: string;
@@ -9,24 +10,6 @@ type NewsItem = {
   url: string;
   thumbnail?: string;
 };
-
-const FALLBACK_NEWS: NewsItem[] = [
-  {
-    title: '示例：市场快讯加载中',
-    content: '暂无可用新闻源时用于占位显示。',
-    url: 'https://www.wsj.com',
-  },
-  {
-    title: '示例：宏观数据发布',
-    content: '请稍后刷新查看最新内容。',
-    url: 'https://www.cnbc.com',
-  },
-  {
-    title: '示例：风险偏好变化',
-    content: '关注利率、汇率与波动率。',
-    url: 'https://www.marketwatch.com',
-  },
-];
 
 const NewsTickerCompact = ({ limit = 3 }: { limit?: number }) => {
   const [language, setLanguage] = useState<'en' | 'zh'>(() =>
@@ -62,12 +45,12 @@ const NewsTickerCompact = ({ limit = 3 }: { limit?: number }) => {
         const list: NewsItem[] = (data.items || data.blogs || []).filter(
           (b: NewsItem) => !!b.title && !!b.content,
         );
-        const next = (list.length ? list : FALLBACK_NEWS).slice(0, Math.max(1, limit));
+        const next = list.slice(0, Math.max(1, limit));
         if (!active) return;
         setItems(next);
       } catch (err) {
         console.error('Failed to load compact finance news', err);
-        setItems(FALLBACK_NEWS.slice(0, Math.max(1, limit)));
+        setItems([]);
       }
     };
 
@@ -89,7 +72,7 @@ const NewsTickerCompact = ({ limit = 3 }: { limit?: number }) => {
           items.map((item, idx) => (
             <a
               key={idx}
-              href={item.url ? `/?q=Summary: ${item.url}` : '#'}
+              href={item.url ? buildSummaryHref(item.url, item.title, item.content) : '#'}
               className="block px-3 py-2 hover:bg-light-200/60 hover:dark:bg-dark-200/60 transition-colors"
             >
               <p className="text-xs font-semibold text-black/90 dark:text-white line-clamp-2">
@@ -102,7 +85,10 @@ const NewsTickerCompact = ({ limit = 3 }: { limit?: number }) => {
           ))
         ) : (
           <div className="px-3 py-3 text-[11px] text-black/50 dark:text-white/50">
-            {t('Loading…', '加载中…')}
+            {t(
+              'No real finance headlines available right now.',
+              '当前暂无真实财经快讯',
+            )}
           </div>
         )}
       </div>

@@ -4,7 +4,9 @@ import { Document } from '@langchain/core/documents';
 
 export const messages = sqliteTable('messages', {
   id: integer('id').primaryKey(),
-  role: text('type', { enum: ['assistant', 'user', 'source'] }).notNull(),
+  role: text('type', {
+    enum: ['assistant', 'user', 'source', 'status'],
+  }).notNull(),
   chatId: text('chatId').notNull(),
   owner: text('owner'),
   createdAt: text('createdAt')

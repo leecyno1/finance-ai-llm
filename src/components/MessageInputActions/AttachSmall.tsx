@@ -1,21 +1,14 @@
-import { cn } from '@/lib/utils';
 import {
   Popover,
   PopoverButton,
   PopoverPanel,
   Transition,
 } from '@headlessui/react';
-import {
-  CopyPlus,
-  File,
-  LoaderCircle,
-  Paperclip,
-  Plus,
-  Trash,
-} from 'lucide-react';
+import { File, LoaderCircle, Paperclip, Plus, Trash } from 'lucide-react';
 import { Fragment, useRef, useState } from 'react';
-import { File as FileType } from '../ChatWindow';
 import { useChat } from '@/lib/hooks/useChat';
+import { MinimalProvider } from '@/lib/models/types';
+import { toast } from 'sonner';
 
 const AttachSmall = () => {
   const { files, setFiles, setFileIds, fileIds } = useChat();
@@ -23,32 +16,95 @@ const AttachSmall = () => {
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef<any>();
 
-  const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    setLoading(true);
-    const data = new FormData();
+  const resolveEmbeddingSelection = async () => {
+    const providerId = localStorage.getItem('embeddingModelProviderId');
+    const modelKey = localStorage.getItem('embeddingModelKey');
 
-    for (let i = 0; i < e.target.files!.length; i++) {
-      data.append('files', e.target.files![i]);
+    if (providerId && modelKey === 'BAAI/bge-m3') {
+      return { providerId, modelKey };
     }
 
-    const embeddingModelProvider = localStorage.getItem(
-      'embeddingModelProviderId',
+    const res = await fetch('/api/providers');
+    if (!res.ok) return null;
+
+    const data: { providers: MinimalProvider[] } = await res.json();
+    const providers = data.providers || [];
+    const bgeProvider = providers.find((p) =>
+      Array.isArray(p.embeddingModels)
+        ? p.embeddingModels.some((m) => m.key === 'BAAI/bge-m3')
+        : false,
     );
-    const embeddingModel = localStorage.getItem('embeddingModelKey');
+    const minimaxProvider = providers.find(
+      (p) =>
+        String(p.name || '').toLowerCase().includes('minimax') &&
+        Array.isArray(p.embeddingModels) &&
+        p.embeddingModels.length > 0,
+    );
+    const provider =
+      bgeProvider ??
+      minimaxProvider ??
+      providers.find(
+        (p) => Array.isArray(p.embeddingModels) && p.embeddingModels.length > 0,
+      );
+    const model =
+      provider?.embeddingModels?.find((m) => m.key === 'BAAI/bge-m3') ??
+      provider?.embeddingModels?.[0];
+    if (!provider || !model) return null;
 
-    data.append('embedding_model_provider_id', embeddingModelProvider!);
-    data.append('embedding_model_key', embeddingModel!);
+    localStorage.setItem('embeddingModelProviderId', provider.id);
+    localStorage.setItem('embeddingModelKey', model.key);
+    return { providerId: provider.id, modelKey: model.key };
+  };
 
-    const res = await fetch(`/api/uploads`, {
-      method: 'POST',
-      body: data,
-    });
+  const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = e.target.files;
+    if (!selectedFiles?.length) {
+      return;
+    }
 
-    const resData = await res.json();
+    setLoading(true);
 
-    setFiles([...files, ...resData.files]);
-    setFileIds([...fileIds, ...resData.files.map((file: any) => file.fileId)]);
-    setLoading(false);
+    try {
+      const embedding = await resolveEmbeddingSelection();
+      if (!embedding) {
+        toast.error('未找到可用向量模型，请先在设置中配置 Embedding 模型。');
+        return;
+      }
+
+      const data = new FormData();
+      for (let i = 0; i < selectedFiles.length; i++) {
+        data.append('files', selectedFiles[i]);
+      }
+
+      data.append('embedding_model_provider_id', embedding.providerId);
+      data.append('embedding_model_key', embedding.modelKey);
+
+      const res = await fetch('/api/uploads', {
+        method: 'POST',
+        body: data,
+      });
+      const resData = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(resData?.message || '附件上传失败');
+      }
+
+      if (!Array.isArray(resData.files)) {
+        throw new Error('附件上传返回格式异常');
+      }
+
+      setFiles([...files, ...resData.files]);
+      setFileIds([
+        ...fileIds,
+        ...(resData.files.map((file: any) => file.fileId) as string[]),
+      ]);
+    } catch (err: any) {
+      toast.error(err?.message || '附件上传失败');
+    } finally {
+      setLoading(false);
+      e.target.value = '';
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   return loading ? (

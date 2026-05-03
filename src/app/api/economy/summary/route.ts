@@ -127,28 +127,6 @@ const getLast8QuartersStartQuarter = () => {
   return formatQuarterYYYYQ(date);
 };
 
-const getShanghaiDateKey = (date: Date) => {
-  // YYYY-MM-DD in Asia/Shanghai
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
-};
-
-const isAfterShanghai21 = (date: Date) => {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Shanghai',
-    hour: '2-digit',
-    hour12: false,
-  })
-    .formatToParts(date)
-    .find((p) => p.type === 'hour')?.value;
-  const hour = parts ? Number(parts) : 0;
-  return hour >= 21;
-};
-
 const loadCache = (): EconomyCache | null => {
   try {
     if (!fs.existsSync(ECONOMY_CACHE_PATH)) return null;
@@ -1306,11 +1284,10 @@ const getPublicEconomySummary = async (opts?: {
 export const GET = async () => {
   if (!hasTushareToken()) {
     // Public 模式也走磁盘缓存：
-    // - 市场数据：每 10 分钟刷新一次（滚动条）
-    // - 宏观指标：每天上海时间 21:00 后刷新一次（或太久未刷新）
-    const now = new Date();
+    // - 市场数据：6 小时刷新一次
+    // - 宏观指标：6 小时刷新一次
     const cached = loadCache();
-    const MARKET_TTL_MS = 10 * 60 * 1000;
+    const REFRESH_TTL_MS = 6 * 60 * 60 * 1000;
 
     const cachedIsPublic = cached?.data?.source === 'public';
 
@@ -1322,19 +1299,14 @@ export const GET = async () => {
     const marketFresh =
       cachedIsPublic &&
       cachedMarketUpdatedAt > 0 &&
-      Date.now() - cachedMarketUpdatedAt < MARKET_TTL_MS;
-
-    const nowShanghaiDay = getShanghaiDateKey(now);
-    const macroShanghaiDay = cachedMacroUpdatedAt
-      ? getShanghaiDateKey(new Date(cachedMacroUpdatedAt))
-      : '';
-    const macroTooOld =
-      !cachedMacroUpdatedAt ||
-      Date.now() - cachedMacroUpdatedAt > 36 * 60 * 60 * 1000;
+      Date.now() - cachedMarketUpdatedAt < REFRESH_TTL_MS;
+    const macroFresh =
+      cachedIsPublic &&
+      cachedMacroUpdatedAt > 0 &&
+      Date.now() - cachedMacroUpdatedAt < REFRESH_TTL_MS;
     const macroNeedsRefresh =
       !cachedIsPublic ||
-      macroTooOld ||
-      (isAfterShanghai21(now) && macroShanghaiDay !== nowShanghaiDay);
+      !macroFresh;
 
     if (cached && cachedIsPublic && marketFresh && !macroNeedsRefresh) {
       return Response.json(cached.data);
@@ -1353,6 +1325,7 @@ export const GET = async () => {
     }
 
     // 仅市场过期：刷新市场，复用缓存宏观
+    const now = new Date();
     const market = await fetchPublicMarket(now, { includeChina: true });
     const macro = cached.data.macro ?? [];
     const summary: EconomySummary = {
@@ -1376,9 +1349,9 @@ export const GET = async () => {
     const cached = loadCache();
 
     // 缓存策略：
-    // - 市场数据：每 10 分钟刷新一次（滚动条要求）
-    // - 宏观经济：每天上海时间 21:00 后刷新一次（若太久未刷新也会补刷）
-    const MARKET_TTL_MS = 10 * 60 * 1000;
+    // - 市场数据：6 小时刷新一次
+    // - 宏观经济：6 小时刷新一次
+    const REFRESH_TTL_MS = 6 * 60 * 60 * 1000;
     const FORCE_REFRESH = false;
 
     const cachedMarketUpdatedAt =
@@ -1386,19 +1359,16 @@ export const GET = async () => {
     const cachedMacroUpdatedAt = cached?.macroUpdatedAt ?? cached?.updatedAt ?? 0;
 
     const marketFresh =
-      cached && cachedMarketUpdatedAt && Date.now() - cachedMarketUpdatedAt < MARKET_TTL_MS;
-
-    const nowShanghaiDay = getShanghaiDateKey(now);
-    const macroShanghaiDay = cachedMacroUpdatedAt
-      ? getShanghaiDateKey(new Date(cachedMacroUpdatedAt))
-      : '';
-
-    const macroTooOld =
-      !cachedMacroUpdatedAt || Date.now() - cachedMacroUpdatedAt > 36 * 60 * 60 * 1000;
+      cached &&
+      cachedMarketUpdatedAt &&
+      Date.now() - cachedMarketUpdatedAt < REFRESH_TTL_MS;
+    const macroFresh =
+      cached &&
+      cachedMacroUpdatedAt &&
+      Date.now() - cachedMacroUpdatedAt < REFRESH_TTL_MS;
     const macroNeedsRefresh =
       !cached ||
-      macroTooOld ||
-      (isAfterShanghai21(now) && macroShanghaiDay !== nowShanghaiDay);
+      !macroFresh;
 
     if (cached && marketFresh && !macroNeedsRefresh && !FORCE_REFRESH) {
       return Response.json(cached.data);

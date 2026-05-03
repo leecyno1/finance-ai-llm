@@ -5,7 +5,7 @@ import EmptyChatMessageInput from './EmptyChatMessageInput';
 import { File } from './ChatWindow';
 import WeatherWidget from './WeatherWidget';
 import NewsArticleWidget from './NewsArticleWidget';
-import DrLemonBrand from './DrLemonBrand';
+import BrandLogo from './BrandLogo';
 import RecommendedQuestions from './RecommendedQuestions';
 import {
   getShowNewsWidget,
@@ -53,9 +53,8 @@ const EmptyChat = () => {
     <div className="relative">
       <div className="flex flex-col items-center justify-center min-h-screen max-w-screen-sm mx-auto p-2 space-y-4">
         <div className="flex flex-col items-center justify-center w-full space-y-6">
-          {/* 移动端顶部已有品牌栏，这里避免重复占用首屏高度 */}
-          <DrLemonBrand className="hidden sm:flex -mt-4" />
-          <h2 className="text-black/70 dark:text-white/70 text-2xl sm:text-3xl font-medium -mt-2 sm:-mt-8">
+          <BrandLogo mode="home" />
+          <h2 className="text-black/70 dark:text-white/70 text-2xl sm:text-3xl font-medium">
             {language === 'zh'
               ? 'AI金融研究，从这里开始。'
               : 'AI finance research starts here.'}

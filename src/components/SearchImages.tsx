@@ -72,7 +72,7 @@ const SearchImages = ({
             <ImagesIcon size={17} />
             <p>Search images</p>
           </div>
-          <PlusIcon className="text-[#24A0ED]" size={17} />
+          <PlusIcon className="text-rose-500 dark:text-fuchsia-400" size={17} />
         </button>
       )}
       {loading && (
@@ -102,7 +102,7 @@ const SearchImages = ({
                     key={i}
                     src={image.img_src}
                     alt={image.title}
-                    className="h-full w-full aspect-video object-cover rounded-lg transition duration-200 active:scale-95 hover:scale-[1.02] cursor-zoom-in"
+                    className="h-full w-full aspect-video object-cover rounded-lg transition duration-200 active:scale-95 hover:scale-[1.02] cursor-zoom-in brand-image-highlight"
                   />
                 ))
               : images.map((image, i) => (
@@ -118,13 +118,13 @@ const SearchImages = ({
                     key={i}
                     src={image.img_src}
                     alt={image.title}
-                    className="h-full w-full aspect-video object-cover rounded-lg transition duration-200 active:scale-95 hover:scale-[1.02] cursor-zoom-in"
+                    className="h-full w-full aspect-video object-cover rounded-lg transition duration-200 active:scale-95 hover:scale-[1.02] cursor-zoom-in brand-image-highlight"
                   />
                 ))}
             {images.length > 4 && (
               <button
                 onClick={() => setOpen(true)}
-                className="bg-light-100 hover:bg-light-200 dark:bg-dark-100 dark:hover:bg-dark-200 transition duration-200 active:scale-95 hover:scale-[1.02] h-auto w-full rounded-lg flex flex-col justify-between text-white p-2"
+                className="bg-light-100 hover:bg-light-200 dark:bg-dark-100 dark:hover:bg-dark-200 transition duration-200 active:scale-95 hover:scale-[1.02] h-auto w-full rounded-lg flex flex-col justify-between text-white p-2 border border-rose-400/35 dark:border-fuchsia-500/35"
               >
                 <div className="flex flex-row items-center space-x-1">
                   {images.slice(3, 6).map((image, i) => (
@@ -132,7 +132,7 @@ const SearchImages = ({
                       key={i}
                       src={image.img_src}
                       alt={image.title}
-                      className="h-6 w-12 rounded-md lg:h-3 lg:w-6 lg:rounded-sm aspect-video object-cover"
+                      className="h-6 w-12 rounded-md lg:h-3 lg:w-6 lg:rounded-sm aspect-video object-cover brand-image-highlight"
                     />
                   ))}
                 </div>

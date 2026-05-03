@@ -47,8 +47,8 @@ const SetupWizard = ({
                 className="text-4xl md:text-6xl xl:text-8xl font-normal font-['Instrument_Serif'] tracking-tight"
               >
                 Welcome to{' '}
-                <span className="text-[#24A0ED] italic font-['PP_Editorial']">
-                  Dr.Lemon
+                <span className="bg-gradient-to-r from-rose-500 via-fuchsia-500 to-blue-600 bg-clip-text text-transparent italic font-['PP_Editorial']">
+                  大圣之怒
                 </span>
               </motion.h2>
               <motion.p
@@ -71,7 +71,7 @@ const SetupWizard = ({
                 transition: { delay: 0.8, duration: 0.7 },
               }}
               exit={{ opacity: 0, scale: 1.1, transition: { duration: 0.6 } }}
-              className="bg-[#24A0ED] left-50 translate-x-[-50%] h-[250px] w-[250px] rounded-full relative z-40 blur-[100px]"
+              className="bg-gradient-to-r from-rose-500 via-fuchsia-500 to-blue-600 left-50 translate-x-[-50%] h-[250px] w-[250px] rounded-full relative z-40 blur-[100px]"
             />
           </div>
         )}
@@ -92,8 +92,8 @@ const SetupWizard = ({
                   className="text-2xl md:text-4xl xl:text-6xl font-normal font-['Instrument_Serif'] tracking-tight"
                 >
                   Let us get{' '}
-                  <span className="text-[#24A0ED] italic font-['PP_Editorial']">
-                    Dr.Lemon
+                  <span className="bg-gradient-to-r from-rose-500 via-fuchsia-500 to-blue-600 bg-clip-text text-transparent italic font-['PP_Editorial']">
+                    大圣之怒
                   </span>{' '}
                   set up for you
                 </motion.p>

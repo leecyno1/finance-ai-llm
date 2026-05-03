@@ -1,6 +1,6 @@
-# Update Dr.Lemon to the latest version
+# Update 大圣之怒 to the latest version
 
-To update Dr.Lemon to the latest version, follow these steps:
+To update 大圣之怒 to the latest version, follow these steps:
 
 ## For Docker users (Using pre-built images)
 
@@ -8,13 +8,13 @@ Simply pull the latest image and restart your container:
 
 ```bash
 docker pull ghcr.io/leecyno1/finance-ai-llm:full-latest
-docker stop dr-lemon || true
-docker rm dr-lemon || true
+docker stop dasheng || true
+docker rm dasheng || true
 docker run -d -p 3000:3000 \
   -e SEARXNG_API_URL=http://localhost:8080 \
-  -v dr-lemon-data:/home/perplexica/data \
-  -v dr-lemon-uploads:/home/perplexica/uploads \
-  --name dr-lemon \
+  -v dasheng-data:/home/perplexica/data \
+  -v dasheng-uploads:/home/perplexica/uploads \
+  --name dasheng \
   ghcr.io/leecyno1/finance-ai-llm:full-latest
 ```
 
@@ -31,15 +31,15 @@ Once updated, go to http://localhost:3000 and verify the latest changes. Your se
 2. Rebuild the Docker image:
 
    ```bash
-   docker build -t dr-lemon .
+   docker build -t dasheng .
    ```
 
 3. Stop and remove the old container, then start the new one:
 
    ```bash
-   docker stop dr-lemon || true
-   docker rm dr-lemon || true
-   docker run -p 3000:3000 -p 8080:8080 --name dr-lemon dr-lemon
+   docker stop dasheng || true
+   docker rm dasheng || true
+   docker run -p 3000:3000 -p 8080:8080 --name dasheng dasheng
    ```
 
 4. Once the command completes, go to http://localhost:3000 and verify the latest changes.

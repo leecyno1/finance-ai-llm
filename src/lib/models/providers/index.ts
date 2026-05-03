@@ -10,6 +10,7 @@ import DeepSeekProvider from './deepseek';
 import LMStudioProvider from './lmstudio';
 import LemonadeProvider from './lemonade';
 import AimlProvider from '@/lib/models/providers/aiml';
+import MiniMaxProvider from '@/lib/models/providers/minimax';
 
 export const providers: Record<string, ProviderConstructor<any>> = {
   openai: OpenAIProvider,
@@ -19,6 +20,7 @@ export const providers: Record<string, ProviderConstructor<any>> = {
   gemini: GeminiProvider,
   groq: GroqProvider,
   deepseek: DeepSeekProvider,
+  minimax: MiniMaxProvider,
   aiml: AimlProvider,
   lmstudio: LMStudioProvider,
   lemonade: LemonadeProvider,

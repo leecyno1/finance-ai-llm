@@ -32,6 +32,8 @@ COPY --from=builder /home/perplexica/data ./data
 COPY drizzle ./drizzle
 
 RUN mkdir /home/perplexica/uploads
+RUN yarn add --ignore-scripts playwright@^1.57.0 && \
+    yarn playwright install --with-deps --only-shell chromium
 
 EXPOSE 3000
 

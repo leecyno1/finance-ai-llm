@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import SmallNewsCard from '@/components/Discover/SmallNewsCard';
 import MajorNewsCard from '@/components/Discover/MajorNewsCard';
-import { getLanguage } from '@/lib/config/clientRegistry';
+import { useClientLanguage } from '@/lib/hooks/useClientLanguage';
 
 export interface Discover {
   title: string;
@@ -47,18 +47,14 @@ const Page = () => {
   const [discover, setDiscover] = useState<Discover[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTopic, setActiveTopic] = useState<string>(topics[0].key);
-  const [language, setLanguage] = useState<'en' | 'zh'>(() =>
-    typeof window !== 'undefined'
-      ? ((getLanguage() as 'en' | 'zh' | undefined) ?? 'zh')
-      : 'zh',
-  );
+  const language = useClientLanguage('zh');
 
   const t = (en: string, zh: string) => (language === 'zh' ? zh : en);
 
-  const fetchArticles = async (topic: string) => {
+  const fetchArticles = async (topic: string, lang: 'en' | 'zh') => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/discover?topic=${topic}`, {
+      const res = await fetch(`/api/discover?topic=${topic}&lang=${lang}`, {
         method: 'GET',
         cache: 'no-store',
         headers: {
@@ -86,29 +82,8 @@ const Page = () => {
   };
 
   useEffect(() => {
-    fetchArticles(activeTopic);
-  }, [activeTopic]);
-
-  useEffect(() => {
-    const updateLanguage = () => {
-      setLanguage(
-        ((getLanguage() as 'en' | 'zh' | undefined) ?? 'zh') as 'en' | 'zh',
-      );
-    };
-
-    if (typeof window !== 'undefined') {
-      window.addEventListener('client-config-changed', updateLanguage);
-      window.addEventListener('storage', updateLanguage);
-      updateLanguage();
-    }
-
-    return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('client-config-changed', updateLanguage);
-        window.removeEventListener('storage', updateLanguage);
-      }
-    };
-  }, []);
+    fetchArticles(activeTopic, language);
+  }, [activeTopic, language]);
 
   return (
     <>
@@ -131,7 +106,7 @@ const Page = () => {
                   className={cn(
                     'border-[0.1px] rounded-full text-sm px-3 py-1 text-nowrap transition duration-200 cursor-pointer',
                     activeTopic === t.key
-                      ? 'text-cyan-700 dark:text-cyan-300 bg-cyan-300/20 border-cyan-700/60 dar:bg-cyan-300/30 dark:border-cyan-300/40'
+                      ? 'text-rose-700 dark:text-rose-300 bg-gradient-to-r from-rose-400/20 to-blue-400/20 border-rose-600/60 dark:border-blue-400/40'
                       : 'border-black/30 dark:border-white/30 text-black/70 dark:text-white/70 hover:text-black dark:hover:text-white hover:border-black/40 dark:hover:border-white/40 hover:bg-black/5 dark:hover:bg-white/5',
                   )}
                   onClick={() => setActiveTopic(t.key)}

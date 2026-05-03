@@ -1,5 +1,5 @@
-const THINK_BLOCK = /<think>[\s\S]*?<\/think>/gi;
 const TOOL_BLOCK = /<tool_code>[\s\S]*?<\/tool_code>/gi;
+const THINK_BLOCK = /<think>[\s\S]*?<\/think>/gi;
 const XML_TAGS = /<\/?(analysis|tool|reasoning|scratchpad)>/gi;
 const TOOL_HASH_BLOCK = /\{[\s\S]*?tool\s*=>[\s\S]*?args\s*=>[\s\S]*?\}/gi;
 
@@ -11,12 +11,18 @@ const META_LINE_ANYWHERE =
 const META_LINE_ANYWHERE_ZH =
   /(基于(?:以上)?(?:指令|要求)|根据(?:以上)?(?:指令|要求)|用户(?:要求|用中文问)|我(?:应该|不应该|需要|不能)|不要(?:做|进行).*?网络搜索|不(?:执行|进行)网络搜索|不会(?:进行|执行)网络搜索|我(?:没有|也没有).*?(?:实时|最新).*(?:数据|信息)|作为(?:写作助手|助手)|焦点模式|上下文(?:为空|是空)|用户问的是|用户的问题|我被设定为|这(?:是|属于)一个.*?(?:问题|请求).*?(?:但是|因此))/i;
 
+const THINKING_LINE =
+  /^\s*(?:>\s*)?\[?(?:推理|思考|reasoning|thinking)\]?[：: ]?.*$/gim;
+const TOOL_CALL_LINE = /^\s*.*(?:tool\s*=>|args\s*=>).*$\n?/gim;
+const WE_CAN_ANSWER_LINE =
+  /^\s*(?:we can answer|i can answer|here'?s (?:an?|the) answer)\s*[:：].*$/gim;
+
 const removeMetaNarrationLines = (text: string): string => {
   const lines = text.split('\n');
   const kept: string[] = [];
 
   for (let i = 0; i < lines.length; i += 1) {
-    const t = lines[i].trim();
+    const t = lines[i].replace(/^\s*>\s*/, '').trim();
 
     // Handle providers splitting "用户问的是…" across lines ("用户问" + "的是…").
     if (t === '用户问' || t === '用户用' || t === '用户用中文问') {
@@ -29,6 +35,10 @@ const removeMetaNarrationLines = (text: string): string => {
     }
 
     if (t.startsWith('的是哪个') || t.startsWith('的是') && t.length <= 40) {
+      continue;
+    }
+
+    if (t === '[推理]' || t === '推理' || t === '思考') {
       continue;
     }
 
@@ -88,32 +98,60 @@ const trimLeadingMetaNarration = (text: string): string => {
   return lines.slice(i).join('\n').trim();
 };
 
+const trimDanglingLeadFragment = (text: string): string => {
+  const lines = text.split('\n');
+  const nonEmptyIdx = lines
+    .map((line, idx) => ({ line: line.trim(), idx }))
+    .filter((x) => x.line.length > 0)
+    .slice(0, 4);
+  if (!nonEmptyIdx.length) return text.trim();
+
+  const danglingPrefix =
+    /^(但是|不过|然而|因此|所以|另外|然后|Then|However|But)(\s|,|，|:|：|$)/i;
+  nonEmptyIdx.forEach(({ line, idx }) => {
+    if (
+      danglingPrefix.test(line) &&
+      line.length <= 32 &&
+      !/[。！？!?]$/.test(line)
+    ) {
+      lines.splice(idx, 1, '');
+    }
+  });
+
+  return lines.join('\n').trim();
+};
+
 export const sanitizeLlmOutput = (raw: string): string => {
   if (!raw) return '';
 
   let text = raw;
 
+  // Never expose chain-of-thought in final UI.
   text = text.replace(THINK_BLOCK, '');
+  // During streaming, hide incomplete <think> blocks before </think> arrives.
+  text = text.replace(/<think>[\s\S]*$/gi, '');
+  text = text.replace(/<\/?think>/gi, '');
   text = text.replace(TOOL_BLOCK, '');
   text = text.replace(XML_TAGS, '');
   text = text.replace(TOOL_HASH_BLOCK, '');
+  text = text.replace(TOOL_CALL_LINE, '');
+  text = text.replace(WE_CAN_ANSWER_LINE, '');
+  text = text.replace(THINKING_LINE, '');
 
   // Some providers emit standalone chain-of-thought markers.
-  text = text.replace(/<think>/gi, '').replace(/<\/think>/gi, '');
   text = text.replace(/<tool_code>/gi, '').replace(/<\/tool_code>/gi, '');
 
   // Remove incomplete internal blocks during streaming, so hidden reasoning
   // is not leaked before closing tags arrive.
-  text = text.replace(/<think>[\s\S]*$/gi, '');
   text = text.replace(/<tool_code>[\s\S]*$/gi, '');
 
-  // Remove visible meta narration that some providers leak in final output.
-  text = removeMetaNarrationLines(text);
-
   // Normalize whitespace for better streaming diff stability.
-  text = text.replace(/\n{3,}/g, '\n\n').trim();
-  text = trimLeadingMetaNarration(text);
+  text = removeMetaNarrationLines(text);
   text = trimMetaPrefixBeforeHeading(text);
+  text = trimLeadingMetaNarration(text);
+  text = text.replace(/\n{3,}/g, '\n\n').trim();
+  // Keep model reasoning prefixes instead of aggressively deleting them.
+  text = trimDanglingLeadFragment(text);
 
   return text;
 };

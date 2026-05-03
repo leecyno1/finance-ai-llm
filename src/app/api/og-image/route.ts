@@ -320,7 +320,7 @@ export const GET = async (req: NextRequest) => {
   const cacheKey = pageUrl.toString();
   const cached = getFromCache(cacheKey);
   if (cached) {
-    if (cached === '__none__') return redirect('/dr-lemon-logo.svg');
+    if (cached === '__none__') return redirect('/dasheng-logo.png');
     return redirect(`/api/image-proxy?url=${encodeURIComponent(cached)}`);
   }
 
@@ -349,7 +349,7 @@ export const GET = async (req: NextRequest) => {
     const headHtml = await fetchHtmlChunk();
     if (!headHtml) {
       setCache(cacheKey, '__none__', OG_NEGATIVE_CACHE_TTL_MS);
-      return redirect('/dr-lemon-logo.svg');
+      return redirect('/dasheng-logo.png');
     }
 
     let found =
@@ -370,7 +370,7 @@ export const GET = async (req: NextRequest) => {
 
     if (!found) {
       setCache(cacheKey, '__none__', OG_NEGATIVE_CACHE_TTL_MS);
-      return redirect('/dr-lemon-logo.svg');
+      return redirect('/dasheng-logo.png');
     }
 
     const resolved = new URL(found, pageUrl).toString();
@@ -379,8 +379,8 @@ export const GET = async (req: NextRequest) => {
   } catch (err: any) {
     setCache(cacheKey, '__none__', OG_NEGATIVE_CACHE_TTL_MS);
     if (err?.name === 'AbortError') {
-      return redirect('/dr-lemon-logo.svg');
+      return redirect('/dasheng-logo.png');
     }
-    return redirect('/dr-lemon-logo.svg');
+    return redirect('/dasheng-logo.png');
   }
 };

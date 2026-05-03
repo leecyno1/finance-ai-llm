@@ -17,8 +17,6 @@ import LineListOutputParser from '../outputParsers/listLineOutputParser';
 import LineOutputParser from '../outputParsers/lineOutputParser';
 import { getDocumentsFromLinks } from '../utils/documents';
 import { Document } from '@langchain/core/documents';
-import { searchSearxng } from '../searxng';
-import { searchTavily } from '../tavily';
 import path from 'node:path';
 import fs from 'node:fs';
 import computeSimilarity from '../utils/computeSimilarity';
@@ -26,6 +24,8 @@ import formatChatHistoryAsString from '../utils/formatHistory';
 import eventEmitter from 'events';
 import { StreamEvent } from '@langchain/core/tracers/log_stream';
 import { sanitizeLlmOutput } from '../utils/llmOutput';
+import { fetchOpenbbMcpDocsForQuery } from '@/lib/openbb/mcp';
+import { executeSearch } from './executeSearch';
 
 export interface MetaSearchAgentType {
   searchAndAnswer: (
@@ -49,19 +49,53 @@ interface Config {
   activeEngines: string[];
 }
 
+const emitStatus = (emitter: eventEmitter, text: string) => {
+  emitter.emit(
+    'data',
+    JSON.stringify({
+      type: 'status',
+      data: text,
+    }),
+  );
+};
+
 type BasicChainInput = {
   chat_history: BaseMessage[];
   query: string;
 };
 
+type SourceEmitter = (docs: Document[]) => void;
+
+const safeEmitSources = (emitter: eventEmitter, docs: Document[]) => {
+  if (!Array.isArray(docs) || docs.length === 0) return;
+
+  emitter.emit(
+    'data',
+    JSON.stringify({
+      type: 'sources',
+      data: docs.map((doc) => ({
+        pageContent: doc.pageContent,
+        metadata: doc.metadata,
+      })),
+    }),
+  );
+};
+
 const MAX_LINKS_PER_SEARCH = 3;
 const MAX_WEB_DOCS = 12;
-const MAX_FINANCE_MARKET_ROWS = 60;
-const MAX_FINANCE_MACRO_ROWS = 120;
-const MAX_FINANCE_NEWS_ROWS = 40;
+const MAX_FINANCE_MARKET_ROWS = 24;
+const MAX_FINANCE_MACRO_ROWS = 36;
+const MAX_FINANCE_NEWS_ROWS = 20;
+const MAX_OPENBB_DOCS = 2;
+const STREAM_GUARD_TIMEOUT_MS = 45000;
 
 const FINANCE_QUERY_RE =
   /股票|个股|A股|港股|美股|欧股|日股|投资|投研|估值|目标价|买入|卖出|持仓|收益率|回撤|资产配置|组合|基金|期货|外汇|利率|债券|宏观|CPI|PPI|PMI|GDP|非农|社融|信贷|财政|国债|美债|reits|commodit|bond|yield|equity|fx|macro|earnings|valuation/i;
+
+const detectQueryLanguage = (query: string): 'zh-CN' | 'en' => {
+  if (/[\u4e00-\u9fff]/.test(query)) return 'zh-CN';
+  return 'en';
+};
 
 const extractUrlsFromText = (text: string) => {
   const urls = Array.from(
@@ -311,47 +345,37 @@ class MetaSearchAgent implements MetaSearchAgentType {
     const query = question.trim().slice(0, 500);
     if (!query) return [];
 
-    const useTavily = this.config.activeEngines.length === 0;
+    const language = detectQueryLanguage(query);
+    const mode = this.config.activeEngines.includes('youtube')
+      ? 'multimodal'
+      : this.config.activeEngines.includes('arxiv') ||
+          this.config.activeEngines.includes('google scholar') ||
+          this.config.activeEngines.includes('pubmed')
+        ? 'academic'
+        : this.config.activeEngines.includes('reddit')
+          ? 'social'
+          : detectFinanceQuery(query)
+            ? 'finance'
+            : 'web';
 
-    const [tavilyRes, searxRes] = await Promise.all([
-      useTavily ? searchTavily(query, { topic: 'news' }) : Promise.resolve({ results: [] }),
-      searchSearxng(query, {
-        language: 'en',
-        engines: this.config.activeEngines,
-      }),
-    ]);
+    const result = await executeSearch(query, mode, {
+      engines: this.config.activeEngines,
+      language,
+      useTavily: this.config.activeEngines.length === 0,
+      allowScrape: true,
+    });
 
-    const docsFromTavily = tavilyRes.results.map(
-      (result) =>
-        new Document({
-          pageContent: result.content || result.title,
-          metadata: {
-            title: result.title,
-            url: result.url,
-            ...(result.img_src ? { img_src: result.img_src } : {}),
-            source: 'tavily',
-          },
-        }),
-    );
+    return dedupeDocs(result.docs, MAX_WEB_DOCS);
+  }
 
-    const docsFromSearxng = searxRes.results.map(
-      (result) =>
-        new Document({
-          pageContent:
-            result.content ||
-            (this.config.activeEngines.includes('youtube')
-              ? result.title
-              : ''),
-          metadata: {
-            title: result.title,
-            url: result.url,
-            ...(result.img_src ? { img_src: result.img_src } : {}),
-            source: 'searxng',
-          },
-        }),
-    );
-
-    return dedupeDocs([...docsFromTavily, ...docsFromSearxng], MAX_WEB_DOCS);
+  private async fetchOpenbbMcpDocs(query: string): Promise<Document[]> {
+    try {
+      const docs = await fetchOpenbbMcpDocsForQuery(query);
+      return docs.slice(0, MAX_OPENBB_DOCS);
+    } catch (err) {
+      console.warn('[metaSearchAgent] openbb mcp fetch failed:', err);
+      return [];
+    }
   }
 
   private async createSearchRetrieverChain(llm: BaseChatModel) {
@@ -562,6 +586,7 @@ class MetaSearchAgent implements MetaSearchAgentType {
     embeddings: Embeddings,
     optimizationMode: 'speed' | 'balanced' | 'quality',
     systemInstructions: string,
+    sourceEmitter?: SourceEmitter,
   ) {
     return RunnableSequence.from([
       RunnableMap.from({
@@ -587,6 +612,8 @@ class MetaSearchAgent implements MetaSearchAgentType {
               docs = await getDocumentsFromLinks({
                 links: urls.slice(0, MAX_LINKS_PER_SEARCH),
               });
+            } else if (optimizationMode === 'speed') {
+              docs = await this.fetchWebDocsHybrid(query);
             } else {
               try {
                 const searchRetrieverChain =
@@ -599,8 +626,11 @@ class MetaSearchAgent implements MetaSearchAgentType {
 
                 query = searchRetrieverResult.query;
                 docs = searchRetrieverResult.docs;
+
+                if (!docs || docs.length === 0) {
+                  docs = await this.fetchWebDocsHybrid(input.query);
+                }
               } catch (err) {
-                // If query rewriting fails (provider timeout/safety), fallback to direct search.
                 console.error(
                   '[metaSearchAgent] retriever chain failed, fallback to direct search',
                   err,
@@ -609,15 +639,19 @@ class MetaSearchAgent implements MetaSearchAgentType {
               }
             }
 
-            // Finance queries should still use real-time web retrieval first.
-            // Local cache only supplements context (or serves as fallback when web docs are empty).
-            if (detectFinanceQuery(query)) {
+            if (optimizationMode !== 'speed' && detectFinanceQuery(query)) {
+              const [openbbDocs] = await Promise.all([
+                this.fetchOpenbbMcpDocs(query),
+              ]);
               const localFinanceDocs = this.buildFinanceBypassDocs(query);
+
               if (!docs || docs.length === 0) {
-                docs = localFinanceDocs;
-              } else if (localFinanceDocs.length > 0) {
-                docs = [...docs, ...localFinanceDocs];
+                docs = [...openbbDocs, ...localFinanceDocs];
+              } else {
+                docs = [...openbbDocs, ...docs, ...localFinanceDocs];
               }
+
+              docs = dedupeDocs(docs, MAX_WEB_DOCS + MAX_OPENBB_DOCS + 4);
             }
           }
 
@@ -628,6 +662,7 @@ class MetaSearchAgent implements MetaSearchAgentType {
             embeddings,
             optimizationMode,
           );
+          sourceEmitter?.(sortedDocs);
 
           return sortedDocs;
         })
@@ -801,34 +836,134 @@ class MetaSearchAgent implements MetaSearchAgentType {
     const summaryMode = Boolean(opts?.summaryMode);
     const summaryUrls = opts?.summaryUrls ?? [];
     const query = opts?.query ?? '';
+    let ended = false;
+    let sawResponseChunk = false;
+    let streamGuard: NodeJS.Timeout | null = null;
+
+    const endOnce = () => {
+      if (ended) return;
+      ended = true;
+      if (streamGuard) {
+        clearTimeout(streamGuard);
+        streamGuard = null;
+      }
+      emitter.emit('end');
+    };
+
+    const extractFinalOutputText = (output: unknown): string => {
+      if (!output) return '';
+      if (typeof output === 'string') return output;
+      if (typeof output === 'object') {
+        const anyOutput = output as any;
+        if (typeof anyOutput.content === 'string') return anyOutput.content;
+        if (Array.isArray(anyOutput.content)) {
+          const merged = anyOutput.content
+            .map((item: any) =>
+              typeof item === 'string'
+                ? item
+                : typeof item?.text === 'string'
+                  ? item.text
+                  : '',
+            )
+            .join('');
+          if (merged.trim()) return merged;
+        }
+      }
+      return '';
+    };
+
+    streamGuard = setTimeout(() => {
+      if (ended) return;
+
+      if (!sawResponseChunk) {
+        emitter.emit(
+          'data',
+          JSON.stringify({
+            type: 'response',
+            data: this.buildHardFallbackAnswer(query),
+          }),
+        );
+      }
+
+      endOnce();
+    }, STREAM_GUARD_TIMEOUT_MS);
 
     try {
       for await (const event of stream) {
+        if (ended) continue;
+
+        if (
+          event.event === 'on_chain_start' &&
+          event.name === 'FinalSourceRetriever'
+        ) {
+          emitStatus(emitter, '正在检索网页来源...');
+        }
+
         if (
           event.event === 'on_chain_end' &&
           event.name === 'FinalSourceRetriever'
         ) {
-          emitter.emit(
-            'data',
-            JSON.stringify({ type: 'sources', data: event.data.output }),
-          );
+          emitStatus(emitter, '已获取来源，正在组织回答...');
+          if (Array.isArray(event.data?.output)) {
+            safeEmitSources(emitter, event.data.output);
+          }
         }
         if (
           event.event === 'on_chain_stream' &&
           event.name === 'FinalResponseGenerator'
         ) {
+          const chunkText = extractFinalOutputText(event.data?.chunk);
+          if (chunkText.trim()) {
+            if (!sawResponseChunk) {
+              emitStatus(emitter, '正在生成回答...');
+            }
+            sawResponseChunk = true;
           emitter.emit(
             'data',
-            JSON.stringify({ type: 'response', data: event.data.chunk }),
+              JSON.stringify({ type: 'response', data: chunkText }),
           );
+          }
         }
         if (
           event.event === 'on_chain_end' &&
           event.name === 'FinalResponseGenerator'
         ) {
-          emitter.emit('end');
+          if (!sawResponseChunk) {
+            const finalText = extractFinalOutputText(event.data?.output);
+            if (finalText.trim()) {
+              sawResponseChunk = true;
+              emitter.emit(
+                'data',
+                JSON.stringify({
+                  type: 'response',
+                  data: finalText,
+                }),
+              );
+            } else {
+              emitter.emit(
+                'data',
+                JSON.stringify({
+                  type: 'response',
+                  data: this.buildHardFallbackAnswer(query),
+                }),
+              );
+              sawResponseChunk = true;
+            }
+          }
+          endOnce();
         }
       }
+
+      if (!sawResponseChunk && !ended) {
+        emitter.emit(
+          'data',
+          JSON.stringify({
+            type: 'response',
+            data: this.buildHardFallbackAnswer(query),
+          }),
+        );
+      }
+      endOnce();
     } catch (err: any) {
       // Some providers (e.g. safety filters) may abort streaming without emitting a final
       // event. Always end the stream so API handlers don't hang.
@@ -873,7 +1008,7 @@ class MetaSearchAgent implements MetaSearchAgentType {
         );
       }
 
-      emitter.emit('end');
+      endOnce();
     }
   }
 
@@ -890,6 +1025,12 @@ class MetaSearchAgent implements MetaSearchAgentType {
 
     const urls = extractUrlsFromText(message);
     const wantsSummary = urls.length > 0 && isUrlSummaryQuery(message);
+    let sourcesEmitted = false;
+    const emitSourcesOnce: SourceEmitter = (docs) => {
+      if (sourcesEmitted || !Array.isArray(docs) || docs.length === 0) return;
+      sourcesEmitted = true;
+      safeEmitSources(emitter, docs);
+    };
 
     // URL summary is a product-critical path (clicking a news item). Some providers
     // are prone to meta narration; do a deterministic summary to guarantee usefulness.
@@ -897,19 +1038,11 @@ class MetaSearchAgent implements MetaSearchAgentType {
       // Important: emit asynchronously so the caller has time to attach listeners.
       void (async () => {
         try {
+          emitStatus(emitter, '正在抓取链接内容...');
           const docs = await getDocumentsFromLinks({
             links: urls.slice(0, MAX_LINKS_PER_SEARCH),
           });
-          emitter.emit(
-            'data',
-            JSON.stringify({
-              type: 'sources',
-              data: docs.map((d) => ({
-                pageContent: d.pageContent,
-                metadata: d.metadata,
-              })),
-            }),
-          );
+          safeEmitSources(emitter, docs);
           emitter.emit(
             'data',
             JSON.stringify({
@@ -940,6 +1073,7 @@ class MetaSearchAgent implements MetaSearchAgentType {
       embeddings,
       optimizationMode,
       systemInstructions,
+      emitSourcesOnce,
     );
 
     const stream = answeringChain.streamEvents(

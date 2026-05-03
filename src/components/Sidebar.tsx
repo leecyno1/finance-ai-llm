@@ -3,12 +3,14 @@
 import { cn } from '@/lib/utils';
 import {
   BookOpenText,
+  Compass,
   Home,
-  Search,
   Plus,
   Newspaper,
   Table2,
   BriefcaseBusiness,
+  PieChart,
+  TrendingUp,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useSelectedLayoutSegments } from 'next/navigation';
@@ -16,8 +18,9 @@ import React, { useEffect, useState, type ReactNode } from 'react';
 import Layout from './Layout';
 import ThemeSwitcher from './theme/Switcher';
 import LanguageSwitcher from './LanguageSwitcher';
-import { getLanguage } from '@/lib/config/clientRegistry';
 import SettingsButton from './Settings/SettingsButton';
+import { useClientLanguage } from '@/lib/hooks/useClientLanguage';
+import BrandLogo from './BrandLogo';
 
 const VerticalIconContainer = ({ children }: { children: ReactNode }) => {
   return <div className="flex flex-col items-center w-full">{children}</div>;
@@ -25,33 +28,16 @@ const VerticalIconContainer = ({ children }: { children: ReactNode }) => {
 
 const Sidebar = ({ children }: { children: React.ReactNode }) => {
   const segments = useSelectedLayoutSegments();
-  const [showSettings, setShowSettings] = useState<boolean>(() =>
-    typeof window !== 'undefined'
-      ? localStorage.getItem('showSettings') === 'true'
-      : false,
-  );
-
-  const [language, setLanguage] = useState<'en' | 'zh'>(() =>
-    typeof window !== 'undefined'
-      ? ((getLanguage() as 'en' | 'zh' | undefined) ?? 'zh')
-      : 'zh',
-  );
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+  const language = useClientLanguage('zh');
 
   useEffect(() => {
-    const updateLanguage = () => {
-      setLanguage(
-        ((getLanguage() as 'en' | 'zh' | undefined) ?? 'zh') as 'en' | 'zh',
-      );
-    };
-
     const updateSettingsVisible = () => {
       if (typeof window === 'undefined') return;
       setShowSettings(localStorage.getItem('showSettings') === 'true');
     };
 
     if (typeof window !== 'undefined') {
-      window.addEventListener('client-config-changed', updateLanguage);
-      window.addEventListener('storage', updateLanguage);
       window.addEventListener('settings-button-revealed', updateSettingsVisible);
       window.addEventListener('storage', updateSettingsVisible);
 
@@ -60,8 +46,6 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
 
     return () => {
       if (typeof window !== 'undefined') {
-        window.removeEventListener('client-config-changed', updateLanguage);
-        window.removeEventListener('storage', updateLanguage);
         window.removeEventListener(
           'settings-button-revealed',
           updateSettingsVisible,
@@ -81,13 +65,13 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
       label: t('Home', '主页'),
     },
     {
-      icon: Search,
+      icon: Compass,
       href: '/discover',
       active: segments.includes('discover'),
       label: t('Discover', '发现'),
     },
     {
-      icon: Search,
+      icon: TrendingUp,
       href: '/economy',
       active: segments.includes('economy'),
       label: t('Economy', '经济'),
@@ -96,13 +80,19 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
       icon: Table2,
       href: '/event-impact',
       active: segments.includes('event-impact'),
-      label: t('Impact', '矩阵'),
+      label: t('Event-driven', '事件驱动'),
+    },
+    {
+      icon: PieChart,
+      href: '/asset-allocation',
+      active: segments.includes('asset-allocation'),
+      label: t('Allocation', '资产配置'),
     },
     {
       icon: BriefcaseBusiness,
       href: '/portfolio-check',
       active: segments.includes('portfolio-check'),
-      label: t('Portfolio', '体检'),
+      label: t('Fund Check', '基金诊断'),
     },
     {
       icon: Newspaper,
@@ -120,8 +110,11 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <div>
-      <div className="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-[72px] lg:flex-col border-r border-light-200 dark:border-dark-200">
+      <div className="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-[68px] lg:flex-col border-r border-light-200 dark:border-dark-200">
         <div className="flex grow flex-col items-center justify-between gap-y-5 overflow-y-auto bg-light-secondary dark:bg-dark-secondary px-2 py-8 shadow-sm shadow-light-200/10 dark:shadow-black/25">
+          <Link href="/" className="mb-0.5">
+            <BrandLogo mode="sidebar" />
+          </Link>
           <a
             className="p-2.5 rounded-full bg-light-200 text-black/70 dark:bg-dark-200 dark:text-white/70 hover:opacity-70 hover:scale-105 transition duration-200"
             href="/"
@@ -168,15 +161,24 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
             ))}
           </VerticalIconContainer>
 
-          <div className="flex flex-col items-center gap-2 w-full">
-            <ThemeSwitcher className="w-full text-[10px]" />
-            <LanguageSwitcher />
-            {showSettings && <SettingsButton />}
+          <div className="flex flex-col items-center gap-1 w-full pb-1">
+            <ThemeSwitcher compact />
+            <LanguageSwitcher compact />
+            {showSettings && (
+              <div className="scale-100">
+                <SettingsButton compact />
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       <div className="fixed bottom-0 w-full z-50 bg-light-secondary dark:bg-dark-secondary px-2 py-2 shadow-sm lg:hidden overflow-x-auto">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <ThemeSwitcher compact />
+          <LanguageSwitcher compact />
+          {showSettings && <SettingsButton compact />}
+        </div>
         <div className="flex flex-row items-center gap-x-1 min-w-max">
           {navLinks.map((link, i) => (
             <Link

@@ -17,6 +17,27 @@ The default response language is Chinese; it switches to English when the UI lan
 - **Docker 化部署**：提供包含 SearXNG 的镜像构建，并支持 data/uploads 持久化。
 - **天气卡片**：默认北京；未授权定位时按访问者 IP 粗定位（可关闭定位权限也能用）。
 
+## P0 可观测性与契约（P0 Observability Contract）
+- `GET /api/news/finance`：统一返回 `ok / cached / slot / count / items / sourceStats`，并附带 `sourceHealth / totalFetched / dedupedCount`。
+- `GET /api/economy/news`：统一返回 `ok / cached / slot / count / items / sourceStats`，保留兼容字段 `success / data`，并附带 `sourceHealth`。
+- `GET /api/economy/news/health`：返回新闻源运行健康快照（熔断是否开启、连续失败次数、最近错误和时间）。
+- `GET /api/cache/observability`：返回缓存模块命中率、slot 粒度请求统计、重算耗时统计（`news_finance / economy_news / discover / event_impact`）。
+  - 包含 `slowRecomputeTop`（跨模块慢重算 Top 列表，按 `recomputeAvgMs` 降序）。
+  - 包含 `trendSeries`（按 slot 时间序列，含 `hitRate/recomputeAvgMs/recomputeMaxMs/requests/misses`）。
+  - 包含 `thresholds`（告警阈值），支持通过环境变量配置：`CACHE_HIT_RATE_WARN_PCT`、`CACHE_RECOMPUTE_AVG_WARN_MS`、`CACHE_RECOMPUTE_MAX_WARN_MS`。
+  - 支持筛选参数：`module=all|news_finance|economy_news|discover|event_impact`、`windowHours=<N>`、`topN=<N>`。
+- `POST /api/cache/invalidate`：支持按 `scope` 手动失效并可选 `rewarm` 预热（`scope=all|news_finance|economy_news|discover|event_impact`）。
+- `sourceStats` 语义：
+  - `status=ok`：本轮成功抓取；
+  - `status=failed`：本轮抓取失败（`errorType` 可为 `timeout/network/http/parse/content_type/unknown`）；
+  - `status=skipped`：触发熔断窗口（`errorType=circuit_open`），暂时跳过。
+- 缓存工作器 `scripts/cache-worker.js` 日志包含错误分类：`network_timeout / dns / network / non_2xx / parse / unknown`，用于快速定位故障类型。
+- 当配置 `ADMIN_ACCESS_TOKEN` 时，管理类 POST 接口（如 `/api/config`、`/api/cache/invalidate`）将强制鉴权，需携带 `x-admin-token` 或 `Authorization: Bearer <token>`。
+
+## P2 提示词治理与可追溯（P2 Prompt Governance）
+- 事件驱动接口 `GET /api/finance/event-impact` 返回 `promptMeta`，用于标识资产配置观点与基金推荐提示词来源（`env|config|default`）。
+- 基金诊断接口 `POST /api/finance/portfolio-check` 在 `agentMeta` 中返回 `promptTemplateSource` 与 `systemPromptSource`，便于追踪 Agent 输出所用模板来源。
+
 ## 适用场景（Use Cases）
 - **盘前/盘中速览**：快速获取市场要闻与宏观变化。
 - **热点追踪与溯源**：对同一事件多源对比，减少信息偏差。

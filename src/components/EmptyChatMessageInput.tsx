@@ -7,6 +7,9 @@ import Attach from './MessageInputActions/Attach';
 import { useChat } from '@/lib/hooks/useChat';
 import ModelSelector from './MessageInputActions/ChatModelSelector';
 import { getLanguage } from '@/lib/config/clientRegistry';
+import FocusQuickBar, {
+  FocusQuickHint,
+} from './MessageInputActions/FocusQuickBar';
 
 const EmptyChatMessageInput = () => {
   const { sendMessage } = useChat();
@@ -109,16 +112,18 @@ const EmptyChatMessageInput = () => {
             <div className="flex flex-row items-center space-x-1">
               <ModelSelector />
               <Focus />
+              <FocusQuickBar />
               <Attach />
             </div>
             <button
               disabled={message.trim().length === 0}
-              className="bg-sky-500 text-white disabled:text-black/50 dark:disabled:text-white/50 disabled:bg-[#e0e0dc] dark:disabled:bg-[#ececec21] hover:bg-opacity-85 transition duration-100 rounded-full p-2"
+              className="bg-rose-500 text-white disabled:text-black/50 dark:disabled:text-white/50 disabled:bg-[#e0e0dc] dark:disabled:bg-[#ececec21] hover:bg-rose-600 transition duration-100 rounded-full p-2"
             >
               <ArrowRight className="bg-background" size={17} />
             </button>
           </div>
         </div>
+        <FocusQuickHint className="mt-2" />
       </div>
     </form>
   );

@@ -1,9 +1,12 @@
+import fs from 'fs';
+import path from 'node:path';
 import { searchSearxng } from '@/lib/searxng';
 import { getSearxngURL } from '@/lib/config/serverRegistry';
+import { recordCacheObservation } from '@/lib/cache/observability';
 
 export const runtime = 'nodejs';
 
-const websitesForTopic = {
+const websitesForTopicEn = {
   tech: {
     query: ['technology news', 'latest tech', 'AI', 'science and innovation'],
     links: ['techcrunch.com', 'wired.com', 'theverge.com'],
@@ -40,7 +43,39 @@ const websitesForTopic = {
   },
 };
 
-type Topic = keyof typeof websitesForTopic;
+const websitesForTopicZh: Record<keyof typeof websitesForTopicEn, {
+  query: string[];
+  links: string[];
+}> = {
+  tech: {
+    query: ['科技 新闻', '人工智能', '半导体', '互联网 公司'],
+    links: ['ithome.com', '36kr.com', 'huxiu.com', 'sina.com.cn'],
+  },
+  finance: {
+    query: ['财经 新闻', '宏观 经济', 'A股 港股 美股', '货币政策 利率 债券'],
+    links: [
+      'wallstreetcn.com',
+      'finance.sina.com.cn',
+      'finance.eastmoney.com',
+      'stcn.com',
+    ],
+  },
+  art: {
+    query: ['艺术 文化 新闻', '展览 艺术 市场', '文博 艺术 机构'],
+    links: ['art.ifeng.com', 'culture.people.com.cn', 'chinanews.com.cn'],
+  },
+  sports: {
+    query: ['体育 新闻', '足球 篮球 网球', '赛事 快讯'],
+    links: ['sports.sina.com.cn', 'sports.163.com', 'sports.qq.com'],
+  },
+  entertainment: {
+    query: ['娱乐 新闻', '电影 综艺 明星', '影视 行业'],
+    links: ['ent.163.com', 'ent.sina.com.cn', 'ent.qq.com'],
+  },
+};
+
+type Topic = keyof typeof websitesForTopicEn;
+type DiscoverMode = 'normal' | 'preview';
 
 const DEMO_FINANCE_BLOGS = [
   {
@@ -72,6 +107,79 @@ type FinanceBlog = {
   thumbnail?: string;
 };
 
+type DiscoverCacheEntry = {
+  slot: string;
+  updatedAt: number;
+  blogs: FinanceBlog[];
+};
+
+type DiscoverCachePayload = {
+  version: number;
+  entries: Record<string, DiscoverCacheEntry>;
+};
+
+const DATA_DIR = process.env.DATA_DIR || process.cwd();
+const DISCOVER_CACHE_PATH = path.join(DATA_DIR, 'data/discover-cache.json');
+const DISCOVER_CACHE_VERSION = 1;
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+const getSixHourSlotLabel = (d: Date) => {
+  const local = new Date(d.getTime());
+  const slotHour = local.getHours() - (local.getHours() % 6);
+  return `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}T${pad(slotHour)}`;
+};
+
+const buildDiscoverCacheKey = (
+  topic: Topic,
+  lang: 'zh' | 'en',
+  mode: DiscoverMode,
+) => `${lang}:${topic}:${mode}`;
+
+const loadDiscoverCache = (): DiscoverCachePayload => {
+  try {
+    if (!fs.existsSync(DISCOVER_CACHE_PATH)) {
+      return { version: DISCOVER_CACHE_VERSION, entries: {} };
+    }
+
+    const raw = fs.readFileSync(DISCOVER_CACHE_PATH, 'utf8');
+    if (!raw.trim()) {
+      return { version: DISCOVER_CACHE_VERSION, entries: {} };
+    }
+
+    const parsed = JSON.parse(raw) as DiscoverCachePayload;
+    if (
+      !parsed ||
+      parsed.version !== DISCOVER_CACHE_VERSION ||
+      !parsed.entries ||
+      typeof parsed.entries !== 'object'
+    ) {
+      return { version: DISCOVER_CACHE_VERSION, entries: {} };
+    }
+
+    return parsed;
+  } catch {
+    return { version: DISCOVER_CACHE_VERSION, entries: {} };
+  }
+};
+
+const saveDiscoverCacheEntry = (key: string, slot: string, blogs: FinanceBlog[]) => {
+  try {
+    const cache = loadDiscoverCache();
+    cache.entries[key] = {
+      slot,
+      updatedAt: Date.now(),
+      blogs,
+    };
+
+    const dir = path.dirname(DISCOVER_CACHE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(DISCOVER_CACHE_PATH, JSON.stringify(cache, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to write discover cache', err);
+  }
+};
+
 const fetchWithTimeout = async (
   url: string,
   init: RequestInit & { timeoutMs?: number } = {},
@@ -88,6 +196,18 @@ const fetchWithTimeout = async (
   } finally {
     clearTimeout(timeout);
   }
+};
+
+const dedupeBlogs = (items: FinanceBlog[]) => {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const raw = (item.url || '').trim().toLowerCase();
+    if (!raw) return false;
+    const normalized = raw.replace(/[#?].*$/, '');
+    if (seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
 };
 
 const resolveUrl = (raw: string, baseUrl?: string) => {
@@ -148,11 +268,167 @@ const normalizeText = (value: string) => {
   return stripTags(decoded);
 };
 
+const hasChinese = (value: string) => /[\u4e00-\u9fff]/.test(value);
+
+const zhTranslateCache = new Map<string, string>();
+
+const translateToZh = async (text: string): Promise<string> => {
+  const input = (text || '').trim();
+  if (!input || hasChinese(input)) return input;
+  const key = input.slice(0, 500);
+  const cached = zhTranslateCache.get(key);
+  if (cached) return cached;
+
+  try {
+    const endpoint =
+      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(
+        key,
+      )}`;
+    const res = await fetchWithTimeout(endpoint, {
+      cache: 'no-store',
+      timeoutMs: 4500,
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+      },
+    });
+
+    if (!res.ok) return input;
+    const data = (await res.json()) as any[];
+    const translated = (data?.[0] as any[] | undefined)
+      ?.map((chunk) => String(chunk?.[0] ?? ''))
+      .join('')
+      .trim();
+    const output = translated || input;
+    zhTranslateCache.set(key, output);
+    return output;
+  } catch {
+    return input;
+  }
+};
+
+const localizeBlogs = async (
+  blogs: FinanceBlog[],
+  lang: 'zh' | 'en',
+): Promise<FinanceBlog[]> => {
+  if (lang !== 'zh') return blogs;
+
+  const localized = await Promise.all(
+    blogs.map(async (blog) => {
+      const [title, content] = await Promise.all([
+        translateToZh(blog.title),
+        translateToZh(blog.content),
+      ]);
+      return {
+        ...blog,
+        title,
+        content,
+      };
+    }),
+  );
+
+  return localized;
+};
+
 const withOgFallbackThumbnail = (blog: FinanceBlog): FinanceBlog => {
   const hasThumbnail = (blog.thumbnail || '').trim().length > 0;
   const url = (blog.url || '').trim();
   if (hasThumbnail || !url.startsWith('http')) return blog;
   return { ...blog, thumbnail: `/api/og-image?url=${encodeURIComponent(url)}` };
+};
+
+const looksLikeWeakThumbnail = (thumbnail: string | undefined) => {
+  const value = (thumbnail || '').trim().toLowerCase();
+  if (!value) return true;
+  return (
+    value.includes('share.png') ||
+    value.includes('toparr') ||
+    value.includes('logo') ||
+    value.includes('icon') ||
+    value.includes('sprite')
+  );
+};
+
+const prioritizeImageRich = (blogs: FinanceBlog[]) =>
+  [...blogs].sort((a, b) => {
+    const aStrong = looksLikeWeakThumbnail(a.thumbnail) ? 0 : 1;
+    const bStrong = looksLikeWeakThumbnail(b.thumbnail) ? 0 : 1;
+    if (aStrong !== bStrong) return bStrong - aStrong;
+    return 0;
+  });
+
+const isStrongDirectThumbnail = (thumbnail: string | undefined) => {
+  const value = (thumbnail || '').trim();
+  if (!/^https?:\/\//i.test(value)) return false;
+  return !looksLikeWeakThumbnail(value);
+};
+
+const MAX_ITEMS_BY_TOPIC: Record<Topic, number> = {
+  tech: 60,
+  finance: 48,
+  art: 60,
+  sports: 60,
+  entertainment: 60,
+};
+
+const IMAGE_SENSITIVE_TOPICS = new Set<Topic>(['finance', 'art', 'sports']);
+
+const finalizeDiscoverBlogs = (
+  topic: Topic,
+  blogs: FinanceBlog[],
+): FinanceBlog[] => {
+  const deduped = dedupeBlogs(blogs);
+  const prioritized = prioritizeImageRich(deduped);
+  const limit = MAX_ITEMS_BY_TOPIC[topic] ?? 60;
+
+  // For image-heavy tabs, prefer entries with strong direct thumbnails first,
+  // so card images don't rely on expensive OG extraction fallback.
+  if (IMAGE_SENSITIVE_TOPICS.has(topic)) {
+    const direct = prioritized.filter((b) => isStrongDirectThumbnail(b.thumbnail));
+    const backup = prioritized.filter((b) => !isStrongDirectThumbnail(b.thumbnail));
+    const minDirectOnly = 18;
+
+    const selected =
+      direct.length >= minDirectOnly
+        ? direct
+        : [...direct, ...backup.slice(0, Math.max(0, minDirectOnly - direct.length))];
+
+    return selected.slice(0, limit).map(withOgFallbackThumbnail);
+  }
+
+  return prioritized.slice(0, limit).map(withOgFallbackThumbnail);
+};
+
+const isCnDomain = (url: string) => {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host.endsWith('.cn') ||
+      host.includes('sina.com') ||
+      host.includes('163.com') ||
+      host.includes('qq.com') ||
+      host.includes('people.com')
+    );
+  } catch {
+    return false;
+  }
+};
+
+const prioritizeLocalizedBlogs = (
+  blogs: FinanceBlog[],
+  lang: 'zh' | 'en',
+): FinanceBlog[] => {
+  if (lang !== 'zh') return blogs;
+
+  const cnStrong: FinanceBlog[] = [];
+  const others: FinanceBlog[] = [];
+
+  for (const blog of blogs) {
+    const text = `${blog.title || ''} ${blog.content || ''}`;
+    if (hasChinese(text) || isCnDomain(blog.url || '')) cnStrong.push(blog);
+    else others.push(blog);
+  }
+
+  return [...cnStrong, ...others];
 };
 
 const parseSinaRss = (xml: string, feedUrl?: string): FinanceBlog[] => {
@@ -270,14 +546,10 @@ const parseGenericRss = (xml: string, feedUrl?: string): FinanceBlog[] => {
   return items;
 };
 
-const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
+const fetchEnglishFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
   const rssFeeds = [
-    'https://www.cnbc.com/id/100003114/device/rss/rss.html', // CNBC Top News
-    'https://www.cnbc.com/id/15839069/device/rss/rss.html', // CNBC Markets
     'https://www.marketwatch.com/rss/topstories', // MarketWatch
     'https://feeds.content.dowjones.io/public/rss/mw_topstories', // MarketWatch (DJ)
-    'https://finance.yahoo.com/rss/topstories', // Yahoo Finance
-    'https://www.nasdaq.com/feed/rssoutbound?category=markets', // Nasdaq Markets
   ];
 
   const results = await Promise.allSettled(
@@ -295,18 +567,127 @@ const fetchFinanceNewsFromRss = async (): Promise<FinanceBlog[]> => {
     .filter((r) => r.status === 'fulfilled')
     .flatMap((r) => (r as PromiseFulfilledResult<FinanceBlog[]>).value);
 
-  const seen = new Set<string>();
-  return blogs
-    .filter((b) => {
-      const key = b.url.toLowerCase().trim();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .map(withOgFallbackThumbnail);
+  return dedupeBlogs(blogs);
 };
 
-const RSS_BY_TOPIC: Record<Topic, string[]> = {
+const fetchWallstreetcnFinanceNews = async (): Promise<FinanceBlog[]> => {
+  const endpoint = 'https://api-one-wscn.awtmt.com/apiv1/content/lives?channel=global';
+  const res = await fetchWithTimeout(endpoint, {
+    timeoutMs: 10_000,
+    cache: 'no-store',
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      Accept: 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Wallstreetcn API error: ${res.status}`);
+  }
+
+  const payload = (await res.json()) as any;
+  const items = Array.isArray(payload?.data?.items) ? payload.data.items : [];
+
+  const blogs: FinanceBlog[] = items
+    .map((item: any) => {
+      const title = normalizeText(String(item?.title ?? ''));
+      const url = resolveUrl(
+        String(item?.uri ?? item?.article?.uri ?? '').trim(),
+      );
+      const content = normalizeText(
+        String(item?.content_text ?? item?.content ?? item?.reference ?? ''),
+      );
+      const thumbnail = resolveUrl(
+        String(
+          item?.article?.image?.uri ??
+            item?.images?.[0]?.uri ??
+            item?.cover_images?.[0]?.uri ??
+            '',
+        ),
+        url,
+      );
+
+      return {
+        title,
+        url,
+        content: content || title,
+        thumbnail,
+      };
+    })
+    .filter((item: FinanceBlog) => item.title && item.url);
+
+  return dedupeBlogs(blogs);
+};
+
+const fetchSinaFinanceNews = async (): Promise<FinanceBlog[]> => {
+  const endpoint =
+    'https://feed.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=80&page=1';
+  const res = await fetchWithTimeout(endpoint, {
+    timeoutMs: 10_000,
+    cache: 'no-store',
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      Accept: 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Sina API error: ${res.status}`);
+  }
+
+  const payload = (await res.json()) as any;
+  const items = Array.isArray(payload?.result?.data) ? payload.result.data : [];
+
+  const blogs: FinanceBlog[] = items
+    .map((item: any) => {
+      const title = normalizeText(String(item?.title ?? ''));
+      const url = resolveUrl(String(item?.url ?? '').trim());
+      const content = normalizeText(
+        String(
+          item?.summary ?? item?.intro ?? item?.wapsummary ?? item?.stitle ?? '',
+        ),
+      );
+      const thumbnail = resolveUrl(
+        String(item?.images?.[0]?.u ?? item?.img?.u ?? ''),
+        url,
+      );
+
+      return {
+        title,
+        url,
+        content: content || title,
+        thumbnail,
+      };
+    })
+    .filter((item: FinanceBlog) => item.title && item.url);
+
+  return dedupeBlogs(blogs);
+};
+
+const fetchChineseFinanceNews = async (): Promise<FinanceBlog[]> => {
+  const rssFeeds = [
+    'https://www.chinanews.com.cn/rss/finance.xml',
+    'https://www.people.com.cn/rss/finance.xml',
+  ];
+
+  const [sinaResult, rssResult, enRssResult, wscnResult] =
+    await Promise.allSettled([
+    fetchSinaFinanceNews(),
+    fetchBlogsFromRss(rssFeeds),
+    fetchEnglishFinanceNewsFromRss(),
+    fetchWallstreetcnFinanceNews(),
+  ]);
+
+  const merged: FinanceBlog[] = [];
+  if (sinaResult.status === 'fulfilled') merged.push(...sinaResult.value);
+  if (rssResult.status === 'fulfilled') merged.push(...rssResult.value);
+  if (enRssResult.status === 'fulfilled') merged.push(...enRssResult.value);
+  if (wscnResult.status === 'fulfilled') merged.push(...wscnResult.value);
+
+  return prioritizeImageRich(dedupeBlogs(merged));
+};
+
+const RSS_BY_TOPIC_EN: Record<Topic, string[]> = {
   tech: [
     'https://www.theverge.com/rss/index.xml',
     'https://techcrunch.com/feed/',
@@ -314,13 +695,11 @@ const RSS_BY_TOPIC: Record<Topic, string[]> = {
   ],
   finance: [],
   art: [
-    'https://www.artnews.com/c/art-news/news/feed/',
     'https://hyperallergic.com/feed/',
-    'https://www.artforum.com/feed/',
     'https://www.artsy.net/rss/news',
+    'https://www.smithsonianmag.com/rss/arts-culture/',
   ],
   sports: [
-    'https://www.espn.com/espn/rss/news',
     'https://www.skysports.com/rss/12040',
     'https://www.cbssports.com/rss/headlines/',
   ],
@@ -330,6 +709,37 @@ const RSS_BY_TOPIC: Record<Topic, string[]> = {
     'https://www.tmz.com/rss.xml',
     'https://www.rollingstone.com/feed/',
   ],
+};
+
+const RSS_BY_TOPIC_ZH: Record<Topic, string[]> = {
+  tech: [
+    'https://www.ithome.com/rss/',
+    'https://www.36kr.com/feed',
+    'https://www.ifanr.com/feed',
+    'https://www.people.com.cn/rss/it.xml',
+  ],
+  finance: [
+    'https://www.chinanews.com.cn/rss/finance.xml',
+    'https://www.people.com.cn/rss/finance.xml',
+    'https://www.cnbc.com/id/15839069/device/rss/rss.html',
+    'https://www.marketwatch.com/rss/topstories',
+  ],
+  art: [
+    'https://www.people.com.cn/rss/culture.xml',
+    'https://www.chinanews.com.cn/rss/culture.xml',
+    'https://www.chinanews.com.cn/rss/cul.shtml',
+  ],
+  sports: [
+    'https://www.people.com.cn/rss/sports.xml',
+    'https://www.chinanews.com.cn/rss/sports.xml',
+    'https://www.chinanews.com.cn/rss/ty.shtml',
+  ],
+  entertainment: ['https://www.people.com.cn/rss/ent.xml'],
+};
+
+const getRssFeedsByLanguage = (topic: Topic, lang: 'zh' | 'en') => {
+  const primary = lang === 'zh' ? RSS_BY_TOPIC_ZH : RSS_BY_TOPIC_EN;
+  return primary[topic] ?? [];
 };
 
 const fetchBlogsFromRss = async (urls: string[]): Promise<FinanceBlog[]> => {
@@ -361,8 +771,7 @@ const fetchBlogsFromRss = async (urls: string[]): Promise<FinanceBlog[]> => {
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    })
-    .map(withOgFallbackThumbnail);
+    });
 };
 
 const toDiscoverItem = (item: any): FinanceBlog => ({
@@ -381,53 +790,96 @@ const toDiscoverItem = (item: any): FinanceBlog => ({
 
 export const GET = async (req: Request) => {
   try {
+    const requestStart = Date.now();
     const params = new URL(req.url).searchParams;
 
-    const mode: 'normal' | 'preview' =
-      (params.get('mode') as 'normal' | 'preview') || 'normal';
-    const topic: Topic = (params.get('topic') as Topic) || 'tech';
-
-    const selectedTopic = websitesForTopic[topic];
-    const language = topic === 'finance' ? 'zh-CN' : 'en';
-
-    // 财经：优先使用华尔街见闻文章源（带封面图），失败再回退到 RSS / 示例
-    if (topic === 'finance') {
-      const rssBlogs = await fetchFinanceNewsFromRss();
-      const merged = [...rssBlogs];
-      const seen = new Set<string>();
-      const deduped = merged.filter((b) => {
-        const key = b.url.toLowerCase().trim();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
+    const mode: DiscoverMode =
+      (params.get('mode') as DiscoverMode) || 'normal';
+    const topicRaw = (params.get('topic') as Topic) || 'tech';
+    const topic: Topic = topicRaw in websitesForTopicEn ? topicRaw : 'tech';
+    const lang = params.get('lang') === 'en' ? 'en' : 'zh';
+    const slotLabel = getSixHourSlotLabel(new Date());
+    const cacheKey = buildDiscoverCacheKey(topic, lang, mode);
+    const cachePayload = loadDiscoverCache();
+    const cachedEntry = cachePayload.entries[cacheKey];
+    if (
+      cachedEntry &&
+      cachedEntry.slot === slotLabel &&
+      Array.isArray(cachedEntry.blogs) &&
+      cachedEntry.blogs.length > 0
+    ) {
+      recordCacheObservation({
+        module: 'discover',
+        slot: cachedEntry.slot,
+        cached: true,
+        sampleSize: cachedEntry.blogs.length,
       });
-
-      if (deduped.length) {
-        return Response.json(
-          {
-            blogs: deduped.slice(0, 60),
-          },
-          { status: 200 },
-        );
-      }
-      // RSS 失败时至少返回示例数据，保证前端有内容
       return Response.json(
         {
-          blogs: DEMO_FINANCE_BLOGS.map(withOgFallbackThumbnail),
+          blogs: cachedEntry.blogs,
+          cached: true,
+          updatedAt: cachedEntry.updatedAt,
+          slot: cachedEntry.slot,
         },
         { status: 200 },
       );
     }
 
-    // 其它主题：优先使用固定 RSS 源（更稳定且更容易带图），失败再退回 SearXNG
-    const rssFirstBlogs = await fetchBlogsFromRss(RSS_BY_TOPIC[topic] ?? []);
-    if (rssFirstBlogs.length) {
+    const respondBlogs = (blogs: FinanceBlog[]) => {
+      saveDiscoverCacheEntry(cacheKey, slotLabel, blogs);
+      recordCacheObservation({
+        module: 'discover',
+        slot: slotLabel,
+        cached: false,
+        sampleSize: blogs.length,
+        recomputeMs: Date.now() - requestStart,
+      });
       return Response.json(
         {
-          blogs: rssFirstBlogs.map(toDiscoverItem).map(withOgFallbackThumbnail),
+          blogs,
+          cached: false,
+          updatedAt: Date.now(),
+          slot: slotLabel,
         },
         { status: 200 },
       );
+    };
+
+    const selectedTopic =
+      lang === 'zh' ? websitesForTopicZh[topic] : websitesForTopicEn[topic];
+    const searchLanguage = lang === 'zh' ? 'zh-CN' : 'en';
+
+    // 财经：按语言优先真实源，失败再回退示例
+    if (topic === 'finance') {
+      const deduped =
+        lang === 'zh'
+          ? await fetchChineseFinanceNews()
+          : await fetchEnglishFinanceNewsFromRss();
+
+      if (deduped.length) {
+        const localized = await localizeBlogs(finalizeDiscoverBlogs(topic, deduped), lang);
+        return respondBlogs(localized);
+      }
+      const localizedDemo = await localizeBlogs(
+        finalizeDiscoverBlogs(topic, DEMO_FINANCE_BLOGS),
+        lang,
+      );
+      return respondBlogs(localizedDemo);
+    }
+
+    // 其它主题：优先使用语言对应 RSS 源（更稳定且更容易带图），失败再退回 SearXNG
+    const rssFirstBlogs = await fetchBlogsFromRss(
+      getRssFeedsByLanguage(topic, lang),
+    );
+    if (rssFirstBlogs.length) {
+      const localized = await localizeBlogs(
+        finalizeDiscoverBlogs(
+          topic,
+          prioritizeLocalizedBlogs(rssFirstBlogs.map(toDiscoverItem), lang),
+        ),
+        lang,
+      );
+      return respondBlogs(localized);
     }
 
     const searxngURL = getSearxngURL();
@@ -435,13 +887,15 @@ export const GET = async (req: Request) => {
 
     if (!searxngURL) {
       // 其它主题在未配置 SearXNG 时，回退到公开 RSS（保证 Discover 有内容）
-      const rssBlogs = await fetchBlogsFromRss(RSS_BY_TOPIC[topic] ?? []);
-      return Response.json(
-        {
-          blogs: rssBlogs.map(toDiscoverItem).map(withOgFallbackThumbnail),
-        },
-        { status: 200 },
+      const rssBlogs = await fetchBlogsFromRss(getRssFeedsByLanguage(topic, lang));
+      const localized = await localizeBlogs(
+        finalizeDiscoverBlogs(
+          topic,
+          prioritizeLocalizedBlogs(rssBlogs.map(toDiscoverItem), lang),
+        ),
+        lang,
       );
+      return respondBlogs(localized);
     }
 
     try {
@@ -456,7 +910,7 @@ export const GET = async (req: Request) => {
                   await searchSearxng(`site:${link} ${query}`, {
                     engines: ['bing news'],
                     pageno: 1,
-                    language,
+                    language: searchLanguage,
                   })
                 ).results;
               }),
@@ -478,32 +932,70 @@ export const GET = async (req: Request) => {
             {
               engines: ['bing news'],
               pageno: 1,
-              language,
+              language: searchLanguage,
             },
           )
         ).results;
       }
     } catch (err) {
       console.error('Discover searxng failed, fallback to rss', err);
-      const rssBlogs = await fetchBlogsFromRss(RSS_BY_TOPIC[topic] ?? []);
-      return Response.json(
-        {
-          blogs: rssBlogs.map(toDiscoverItem).map(withOgFallbackThumbnail),
-        },
-        { status: 200 },
+      const rssBlogs = await fetchBlogsFromRss(getRssFeedsByLanguage(topic, lang));
+      const localized = await localizeBlogs(
+        finalizeDiscoverBlogs(
+          topic,
+          prioritizeLocalizedBlogs(rssBlogs.map(toDiscoverItem), lang),
+        ),
+        lang,
       );
+      return respondBlogs(localized);
     }
 
-    return Response.json(
-      {
-        blogs: (data as any[]).map(toDiscoverItem).map(withOgFallbackThumbnail),
-      },
-      {
-        status: 200,
-      },
+    const localized = await localizeBlogs(
+      finalizeDiscoverBlogs(
+        topic,
+        prioritizeLocalizedBlogs((data as any[]).map(toDiscoverItem), lang),
+      ),
+      lang,
     );
+    return respondBlogs(localized);
   } catch (err) {
     console.error(`An error occurred in discover route: ${err}`);
+    try {
+      const params = new URL(req.url).searchParams;
+      const mode: DiscoverMode =
+        (params.get('mode') as DiscoverMode) || 'normal';
+      const topicRaw = (params.get('topic') as Topic) || 'tech';
+      const topic: Topic = topicRaw in websitesForTopicEn ? topicRaw : 'tech';
+      const lang = params.get('lang') === 'en' ? 'en' : 'zh';
+      const cacheKey = buildDiscoverCacheKey(topic, lang, mode);
+      const stale = loadDiscoverCache().entries[cacheKey];
+      if (stale?.blogs?.length) {
+        recordCacheObservation({
+          module: 'discover',
+          slot: stale.slot || getSixHourSlotLabel(new Date()),
+          cached: true,
+          sampleSize: stale.blogs.length,
+        });
+        return Response.json(
+          {
+            blogs: stale.blogs,
+            cached: true,
+            stale: true,
+            updatedAt: stale.updatedAt,
+            slot: stale.slot,
+          },
+          { status: 200 },
+        );
+      }
+    } catch {
+      // ignore stale fallback error
+    }
+    recordCacheObservation({
+      module: 'discover',
+      slot: getSixHourSlotLabel(new Date()),
+      cached: false,
+      sampleSize: 0,
+    });
     return Response.json(
       {
         blogs: [],

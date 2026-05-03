@@ -3,24 +3,9 @@ import { Model, ModelList, ProviderMetadata } from '../types';
 import BaseModelProvider from './baseProvider';
 import { Embeddings } from '@langchain/core/embeddings';
 import { UIConfigField } from '@/lib/config/types';
-import { getConfiguredModelProviderById } from '@/lib/config/serverRegistry';
-import { HuggingFaceTransformersEmbeddings } from '@langchain/community/embeddings/huggingface_transformers';
 interface TransformersConfig {}
 
-const defaultEmbeddingModels: Model[] = [
-  {
-    name: 'all-MiniLM-L6-v2',
-    key: 'Xenova/all-MiniLM-L6-v2',
-  },
-  {
-    name: 'mxbai-embed-large-v1',
-    key: 'mixedbread-ai/mxbai-embed-large-v1',
-  },
-  {
-    name: 'nomic-embed-text-v1',
-    key: 'Xenova/nomic-embed-text-v1',
-  },
-];
+const defaultEmbeddingModels: Model[] = [];
 
 const providerConfigFields: UIConfigField[] = [];
 
@@ -37,35 +22,17 @@ class TransformersProvider extends BaseModelProvider<TransformersConfig> {
   }
 
   async getModelList(): Promise<ModelList> {
-    const defaultModels = await this.getDefaultModels();
-    const configProvider = getConfiguredModelProviderById(this.id)!;
-
-    return {
-      embedding: [
-        ...defaultModels.embedding,
-        ...configProvider.embeddingModels,
-      ],
-      chat: [],
-    };
+    return this.getDefaultModels();
   }
 
   async loadChatModel(key: string): Promise<BaseChatModel> {
     throw new Error('Transformers Provider does not support chat models.');
   }
 
-  async loadEmbeddingModel(key: string): Promise<Embeddings> {
-    const modelList = await this.getModelList();
-    const exists = modelList.embedding.find((m) => m.key === key);
-
-    if (!exists) {
-      throw new Error(
-        'Error Loading OpenAI Embedding Model. Invalid Model Selected.',
-      );
-    }
-
-    return new HuggingFaceTransformersEmbeddings({
-      model: key,
-    });
+  async loadEmbeddingModel(_key: string): Promise<Embeddings> {
+    throw new Error(
+      'Transformers embedding is disabled. Use MiniMax embedding instead.',
+    );
   }
 
   static parseAndValidate(raw: any): TransformersConfig {

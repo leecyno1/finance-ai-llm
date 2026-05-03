@@ -1,8 +1,8 @@
-# Dr.Lemon Search API Documentation
+# 大圣之怒 Search API Documentation
 
 ## Overview
 
-Dr.Lemon’s Search API makes it easy to use our AI-powered search engine. You can run different types of searches, pick the models you want to use, and get the most recent info.
+大圣之怒’s Search API makes it easy to use our AI-powered search engine. You can run different types of searches, pick the models you want to use, and get the most recent info.
 
 ## Endpoints
 
@@ -53,7 +53,7 @@ Use the `id` field as the `providerId` and the `key` field from the models array
 
 **Full URL**: `http://localhost:3000/api/search`
 
-**Note**: Replace `localhost:3000` with your Dr.Lemon instance URL if running on a different host or port
+**Note**: Replace `localhost:3000` with your 大圣之怒 instance URL if running on a different host or port
 
 ### Request
 
@@ -73,12 +73,12 @@ The API accepts a JSON object in the request body, where you define the focus mo
   },
   "optimizationMode": "speed",
   "focusMode": "webSearch",
-  "query": "What is Dr.Lemon",
+  "query": "What is 大圣之怒",
   "history": [
     ["human", "Hi, how are you?"],
     ["assistant", "I am doing well, how can I help you today?"]
   ],
-  "systemInstructions": "Focus on providing technical details about Dr.Lemon's architecture.",
+  "systemInstructions": "Focus on providing technical details about 大圣之怒's architecture.",
   "stream": false
 }
 ```
@@ -114,8 +114,8 @@ The API accepts a JSON object in the request body, where you define the focus mo
 
   ```json
   [
-    ["human", "What is Dr.Lemon?"],
-    ["assistant", "Dr.Lemon is an AI-powered search engine..."]
+    ["human", "What is 大圣之怒?"],
+    ["assistant", "大圣之怒 is an AI-powered search engine..."]
   ]
   ```
 
@@ -129,17 +129,17 @@ The response from the API includes both the final message and the sources used t
 
 ```json
 {
-  "message": "Dr.Lemon is an innovative, open-source AI-powered search engine designed to enhance the way users search for information online. Here are some key features and characteristics of Dr.Lemon:\n\n- **AI-Powered Technology**: It utilizes advanced machine learning algorithms to not only retrieve information but also to understand the context and intent behind user queries, providing more relevant results [1][5].\n\n- **Open-Source**: Being open-source, Dr.Lemon offers flexibility and transparency, allowing users to explore its functionalities without the constraints of proprietary software [3][10].",
+  "message": "大圣之怒 is an innovative, open-source AI-powered search engine designed to enhance the way users search for information online. Here are some key features and characteristics of 大圣之怒:\n\n- **AI-Powered Technology**: It utilizes advanced machine learning algorithms to not only retrieve information but also to understand the context and intent behind user queries, providing more relevant results [1][5].\n\n- **Open-Source**: Being open-source, 大圣之怒 offers flexibility and transparency, allowing users to explore its functionalities without the constraints of proprietary software [3][10].",
   "sources": [
     {
-      "pageContent": "Dr.Lemon is an innovative, open-source AI-powered search engine designed to enhance the way users search for information online.",
+      "pageContent": "大圣之怒 is an innovative, open-source AI-powered search engine designed to enhance the way users search for information online.",
       "metadata": {
-        "title": "What is Dr.Lemon, and how does it function as an AI-powered search ...",
+        "title": "What is 大圣之怒, and how does it function as an AI-powered search ...",
         "url": "https://example.com"
       }
     },
     {
-      "pageContent": "Dr.Lemon is an open-source AI-powered search tool that dives deep into the internet to find precise answers.",
+      "pageContent": "大圣之怒 is an open-source AI-powered search tool that dives deep into the internet to find precise answers.",
       "metadata": {
         "title": "Sahar Mor's Post",
         "url": "https://www.linkedin.com/posts/sahar-mor_a-new-open-source-project-called-perplexica-activity-7204489745668694016-ncja"
@@ -159,7 +159,7 @@ Example of streamed response objects:
 ```
 {"type":"init","data":"Stream connected"}
 {"type":"sources","data":[{"pageContent":"...","metadata":{"title":"...","url":"..."}},...]}
-{"type":"response","data":"Dr.Lemon is an "}
+{"type":"response","data":"大圣之怒 is an "}
 {"type":"response","data":"innovative, open-source "}
 {"type":"response","data":"AI-powered search engine..."}
 {"type":"done"}

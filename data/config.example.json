@@ -18,19 +18,36 @@
       "type": "openai",
       "chatModels": [
         {
-          "name": "Qwen3-30B-A3B",
-          "key": "Qwen/Qwen3-30B-A3B"
+          "name": "GLM-4.7-Flash",
+          "key": "GLM-4.7-Flash"
+        }
+      ],
+      "embeddingModels": [],
+      "config": {
+        "apiKey": "",
+        "baseURL": "https://ai.gitee.com/v1"
+      },
+      "hash": ""
+    },
+    {
+      "id": "minimax-example",
+      "name": "MiniMax (Example)",
+      "type": "minimax",
+      "chatModels": [
+        {
+          "name": "MiniMax M2.7",
+          "key": "MiniMax-M2.7"
         }
       ],
       "embeddingModels": [
         {
-          "name": "Qwen3-Embedding-8B",
-          "key": "Qwen/Qwen3-Embedding-8B"
+          "name": "MiniMax Embedding (embo-01)",
+          "key": "embo-01"
         }
       ],
       "config": {
         "apiKey": "",
-        "baseURL": ""
+        "baseURL": "https://api.minimaxi.com/v1"
       },
       "hash": ""
     }
@@ -39,5 +56,24 @@
     "searxngURL": "http://localhost:8080",
     "tavilyApiKey": "",
     "tavilyMaxResults": 6
+  },
+  "economy": {
+    "tushareToken": "",
+    "openbbMcpEnabled": false,
+    "openbbMcpUrl": "http://127.0.0.1:8011/mcp",
+    "openbbMcpApiKey": "",
+    "openbbMcpPreferredTools": "",
+    "openbbMcpMaxTools": 3,
+    "minimaxMcpEnabled": false,
+    "minimaxMcpUrl": "http://127.0.0.1:18190/mcp",
+    "minimaxMcpApiKey": "",
+    "minimaxMcpPreferredTools": "web_search,understand_image",
+    "minimaxMcpMaxTools": 3,
+    "fundUniverseLocalPath": "",
+    "fundUniverseCompanyFilter": "",
+    "eventImpactMarketViewPromptTemplate": "",
+    "eventImpactFundPanelPromptTemplate": "",
+    "portfolioCheckAgentPromptTemplate": "",
+    "portfolioCheckAgentSystemPrompt": ""
   }
 }

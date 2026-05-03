@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { buildSummaryHref } from '@/lib/utils/newsSummaryHref';
 
 interface Article {
   title: string;
@@ -8,12 +9,18 @@ interface Article {
 }
 
 const getThumbnailSrc = (thumbnail: string | undefined, baseUrl?: string) => {
-  if (!thumbnail) return '/dr-lemon-logo.svg';
+  if (!thumbnail) return '/dasheng-logo.png';
   const trimmed = thumbnail.trim();
-  if (!trimmed) return '/dr-lemon-logo.svg';
+  if (!trimmed) return '/dasheng-logo.png';
 
-  // Allow local API/image paths (e.g. /api/og-image?... or /dr-lemon-logo.svg)
-  if (trimmed.startsWith('/api/') || trimmed.startsWith('/dr-')) return trimmed;
+  // Allow local API/image paths (e.g. /api/og-image?... or /dasheng-logo.png)
+  if (
+    trimmed.startsWith('/api/') ||
+    trimmed.startsWith('/dr-') ||
+    trimmed.startsWith('/mei-')
+  ) {
+    return trimmed;
+  }
 
   try {
     const resolved = baseUrl ? new URL(trimmed, baseUrl) : new URL(trimmed);
@@ -21,7 +28,7 @@ const getThumbnailSrc = (thumbnail: string | undefined, baseUrl?: string) => {
   } catch {
     // protocol-relative URL like //example.com/a.jpg
     if (trimmed.startsWith('//')) return `https:${trimmed}`;
-    return '/dr-lemon-logo.svg';
+    return '/dasheng-logo.png';
   }
 };
 
@@ -58,19 +65,19 @@ const NewsArticleWidget = () => {
         <div className="w-full text-xs text-red-400">Could not load news.</div>
       ) : article ? (
         <a
-          href={`/?q=Summary: ${article.url}`}
+          href={buildSummaryHref(article.url, article.title, article.content)}
           className="flex flex-row items-stretch w-full h-full relative overflow-hidden group"
         >
           <div className="relative w-24 min-w-24 max-w-24 h-full overflow-hidden">
             <img
-              className="object-cover w-full h-full bg-light-200 dark:bg-dark-200 group-hover:scale-110 transition-transform duration-300"
+              className="object-cover w-full h-full bg-light-200 dark:bg-dark-200 group-hover:scale-110 transition-transform duration-300 brand-image-highlight"
               src={getThumbnailSrc(article.thumbnail, article.url)}
               alt={article.title}
               onError={(e) => {
                 const el = e.currentTarget;
                 if (el.dataset.fallbackApplied) return;
                 el.dataset.fallbackApplied = '1';
-                el.src = '/dr-lemon-logo.svg';
+                el.src = '/dasheng-logo.png';
               }}
             />
           </div>

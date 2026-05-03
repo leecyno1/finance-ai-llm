@@ -4,9 +4,7 @@ import { Document } from '@langchain/core/documents';
 import Navbar from './Navbar';
 import Chat from './Chat';
 import EmptyChat from './EmptyChat';
-import NextError from 'next/error';
 import { useChat } from '@/lib/hooks/useChat';
-import Loader from './ui/Loader';
 
 export interface BaseMessage {
   chatId: string;
@@ -30,6 +28,11 @@ export interface SourceMessage extends BaseMessage {
   sources: Document[];
 }
 
+export interface StatusMessage extends BaseMessage {
+  role: 'status';
+  content: string;
+}
+
 export interface SuggestionMessage extends BaseMessage {
   role: 'suggestion';
   suggestions: string[];
@@ -39,6 +42,7 @@ export type Message =
   | AssistantMessage
   | UserMessage
   | SourceMessage
+  | StatusMessage
   | SuggestionMessage;
 export type ChatTurn = UserMessage | AssistantMessage;
 
@@ -62,9 +66,7 @@ const ChatWindow = () => {
     );
   }
 
-  if (notFound) {
-    return <NextError statusCode={404} />;
-  }
+  if (notFound) return <EmptyChat />;
 
   // 即使还在初始化（isReady 为 false），也直接展示主界面，
   // 避免全屏大圆圈加载动画挡住内容。

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { buildSummaryHref } from '@/lib/utils/newsSummaryHref';
 
 type NewsItem = {
   title: string;
@@ -12,24 +13,6 @@ type NewsItem = {
 const ROW_HEIGHT = 64; // px
 const INTERVAL_MS = 5000;
 const REFRESH_MS = 10 * 60 * 1000; // 每 10 分钟重新拉取一次新闻
-
-const FALLBACK_NEWS: NewsItem[] = [
-  {
-    title: '示例：A股早盘震荡整理，权重股分化明显',
-    content: '示例数据：用于展示新闻播报样式，实际数据需配置搜索引擎后获取。',
-    url: 'https://finance.sina.com.cn',
-  },
-  {
-    title: '示例：美联储最新议息会议纪要公布',
-    content: '示例数据：宏观政策预期变化，关注利率与通胀路径。',
-    url: 'https://www.wsj.com',
-  },
-  {
-    title: '示例：恒生指数午后拉升，科技股领涨',
-    content: '示例数据：港股科技板块情绪回暖，成交放量。',
-    url: 'https://www.wallstreetcn.com',
-  },
-];
 
 const NewsTicker = () => {
   const [baseItems, setBaseItems] = useState<NewsItem[]>([]);
@@ -49,7 +32,7 @@ const NewsTicker = () => {
         const itemsFromApi: NewsItem[] = (data.items || data.blogs || []).filter(
           (b: NewsItem) => !!b.title && !!b.content,
         );
-        let combined = itemsFromApi.length ? itemsFromApi : FALLBACK_NEWS;
+        let combined = itemsFromApi;
 
         // 确保不少于 100 条，不足则循环补足
         const baseLen = combined.length;
@@ -63,7 +46,7 @@ const NewsTicker = () => {
         setOffset(0);
       } catch (err) {
         console.error('Failed to load finance news for ticker', err);
-        setBaseItems(FALLBACK_NEWS);
+        setBaseItems([]);
       }
     };
 
@@ -128,11 +111,7 @@ const NewsTicker = () => {
             loopItems.map((item, idx) => (
               <a
                 key={idx}
-                href={
-                  item.url
-                    ? `/?q=Summary: ${item.url}`
-                    : '#'
-                }
+                href={item.url ? buildSummaryHref(item.url, item.title, item.content) : '#'}
                 className="block px-3 py-2 h-16 border-b border-light-200/40 dark:border-dark-200/40 last:border-b-0 hover:bg-light-200/60 hover:dark:bg-dark-200/60 transition-colors"
               >
                 <p className="text-xs font-semibold text-black/90 dark:text-white line-clamp-2">
@@ -145,7 +124,7 @@ const NewsTicker = () => {
             ))
           ) : (
             <div className="flex h-full items-center justify-center px-3 text-[11px] text-black/50 dark:text-white/50">
-              正在加载财经新闻…
+              暂无可用实时财经新闻（仅展示真实源数据）
             </div>
           )}
         </div>

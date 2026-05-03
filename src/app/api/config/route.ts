@@ -39,6 +39,9 @@ export const GET = async (req: NextRequest) => {
     if (values.economy?.tushareToken) {
       values.economy.tushareToken = '********';
     }
+    if (values.economy?.openbbMcpApiKey) {
+      values.economy.openbbMcpApiKey = '********';
+    }
     if (values.search?.tavilyApiKey) {
       values.search.tavilyApiKey = '********';
     }

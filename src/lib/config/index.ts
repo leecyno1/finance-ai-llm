@@ -23,6 +23,22 @@ class ConfigManager {
     },
     economy: {
       tushareToken: '',
+      openbbMcpEnabled: false,
+      openbbMcpUrl: '',
+      openbbMcpApiKey: '',
+      openbbMcpPreferredTools: '',
+      openbbMcpMaxTools: 3,
+      minimaxMcpEnabled: false,
+      minimaxMcpUrl: '',
+      minimaxMcpApiKey: '',
+      minimaxMcpPreferredTools: '',
+      minimaxMcpMaxTools: 3,
+      fundUniverseLocalPath: '',
+      fundUniverseCompanyFilter: '',
+      eventImpactMarketViewPromptTemplate: '',
+      eventImpactFundPanelPromptTemplate: '',
+      portfolioCheckAgentPromptTemplate: '',
+      portfolioCheckAgentSystemPrompt: '',
     },
   };
   uiConfigSections: UIConfigSections = {
@@ -155,6 +171,193 @@ class ConfigManager {
         scope: 'server',
         env: 'TUSHARE_TOKEN',
       },
+      {
+        name: 'Enable OpenBB MCP',
+        key: 'openbbMcpEnabled',
+        type: 'switch',
+        required: false,
+        description: '启用 OpenBB MCP 数据调用（用于金融问答实时数据增强）。',
+        default: false,
+        scope: 'server',
+        env: 'OPENBB_MCP_ENABLED',
+      },
+      {
+        name: 'OpenBB MCP URL',
+        key: 'openbbMcpUrl',
+        type: 'string',
+        required: false,
+        description:
+          'OpenBB MCP 服务地址（本机示例：http://127.0.0.1:8011/mcp；Docker 内访问宿主机示例：http://host.docker.internal:8011/mcp）。',
+        placeholder: 'http://127.0.0.1:8011/mcp',
+        default: '',
+        scope: 'server',
+        env: 'OPENBB_MCP_URL',
+      },
+      {
+        name: 'OpenBB MCP API Key',
+        key: 'openbbMcpApiKey',
+        type: 'password',
+        required: false,
+        description: 'OpenBB MCP 鉴权密钥（服务端保存，不会返回浏览器）。',
+        placeholder: 'OpenBB MCP API Key',
+        default: '',
+        scope: 'server',
+        env: 'OPENBB_MCP_API_KEY',
+      },
+      {
+        name: 'OpenBB Preferred Tools',
+        key: 'openbbMcpPreferredTools',
+        type: 'textarea',
+        required: false,
+        description:
+          '优先调用的 OpenBB MCP 工具名（逗号或换行分隔），留空则自动匹配。',
+        placeholder: 'equity_price_quote\neconomy_calendar',
+        default: '',
+        scope: 'server',
+        env: 'OPENBB_MCP_PREFERRED_TOOLS',
+      },
+      {
+        name: 'OpenBB Max Tools',
+        key: 'openbbMcpMaxTools',
+        type: 'string',
+        required: false,
+        description: '每次问题最多调用几个 OpenBB MCP 工具（1-6）。',
+        placeholder: '3',
+        default: '3',
+        scope: 'server',
+        env: 'OPENBB_MCP_MAX_TOOLS',
+      },
+      {
+        name: 'Enable MiniMax MCP',
+        key: 'minimaxMcpEnabled',
+        type: 'switch',
+        required: false,
+        description:
+          '启用 MiniMax MCP 工具（用于 web_search / understand_image / text_to_image）。',
+        default: false,
+        scope: 'server',
+        env: 'MINIMAX_MCP_ENABLED',
+      },
+      {
+        name: 'MiniMax MCP URL',
+        key: 'minimaxMcpUrl',
+        type: 'string',
+        required: false,
+        description:
+          'MiniMax MCP 服务地址（建议 REST 端点，如 http://127.0.0.1:8090/mcp）。',
+        placeholder: 'http://127.0.0.1:8090/mcp',
+        default: '',
+        scope: 'server',
+        env: 'MINIMAX_MCP_URL',
+      },
+      {
+        name: 'MiniMax MCP API Key',
+        key: 'minimaxMcpApiKey',
+        type: 'password',
+        required: false,
+        description: 'MiniMax MCP 鉴权密钥（服务端保存，不会返回浏览器）。',
+        placeholder: 'MiniMax MCP API Key',
+        default: '',
+        scope: 'server',
+        env: 'MINIMAX_MCP_API_KEY',
+      },
+      {
+        name: 'MiniMax Preferred Tools',
+        key: 'minimaxMcpPreferredTools',
+        type: 'textarea',
+        required: false,
+        description:
+          '优先调用的 MiniMax MCP 工具名（逗号或换行分隔），留空则自动匹配。',
+        placeholder: 'web_search\nunderstand_image\ntext_to_image',
+        default: '',
+        scope: 'server',
+        env: 'MINIMAX_MCP_PREFERRED_TOOLS',
+      },
+      {
+        name: 'MiniMax Max Tools',
+        key: 'minimaxMcpMaxTools',
+        type: 'string',
+        required: false,
+        description: '每次请求最多调用几个 MiniMax MCP 工具（1-6）。',
+        placeholder: '3',
+        default: '3',
+        scope: 'server',
+        env: 'MINIMAX_MCP_MAX_TOOLS',
+      },
+      {
+        name: 'Fund Universe Local Path',
+        key: 'fundUniverseLocalPath',
+        type: 'string',
+        required: false,
+        description:
+          '本地基金池 JSON 路径（可选，支持绝对路径或相对 DATA_DIR）。可用于接入自建基金库，不再固定南方基金。',
+        placeholder: 'data/fund/southern-fund-a-universe.json',
+        default: '',
+        scope: 'server',
+        env: 'FUND_UNIVERSE_LOCAL_PATH',
+      },
+      {
+        name: 'Fund Universe Company Filter',
+        key: 'fundUniverseCompanyFilter',
+        type: 'textarea',
+        required: false,
+        description:
+          '基金公司筛选（逗号或换行分隔，可留空表示全市场）。示例：南方基金管理股份有限公司',
+        placeholder: '留空=全市场；可填：南方基金管理股份有限公司',
+        default: '',
+        scope: 'server',
+        env: 'FUND_UNIVERSE_COMPANY_FILTER',
+      },
+      {
+        name: 'Event-Impact Market Prompt',
+        key: 'eventImpactMarketViewPromptTemplate',
+        type: 'textarea',
+        required: false,
+        description:
+          '事件驱动-资产配置观点模板（可选）。支持占位符：{{summary_json}}。',
+        placeholder:
+          '留空使用默认模板；可填自定义提示词并包含 {{summary_json}}',
+        default: '',
+        scope: 'server',
+        env: 'EVENT_IMPACT_MARKET_VIEW_PROMPT_TEMPLATE',
+      },
+      {
+        name: 'Event-Impact Fund Panel Prompt',
+        key: 'eventImpactFundPanelPromptTemplate',
+        type: 'textarea',
+        required: false,
+        description:
+          '事件驱动-行业基金推荐模板（可选）。支持占位符：{{rows_json}}。',
+        placeholder:
+          '留空使用默认模板；可填自定义提示词并包含 {{rows_json}}',
+        default: '',
+        scope: 'server',
+        env: 'EVENT_IMPACT_FUND_PANEL_PROMPT_TEMPLATE',
+      },
+      {
+        name: 'Portfolio Agent Prompt',
+        key: 'portfolioCheckAgentPromptTemplate',
+        type: 'textarea',
+        required: false,
+        description:
+          '基金诊断-Agent分析模板（可选）。支持占位符：{{input_text}} {{risk_score}} {{top_holdings}} {{top_sectors}} {{top_factors}} {{tushare_brief}}。',
+        placeholder:
+          '留空使用默认模板；可填自定义提示词并包含相关占位符',
+        default: '',
+        scope: 'server',
+        env: 'PORTFOLIO_CHECK_AGENT_PROMPT_TEMPLATE',
+      },
+      {
+        name: 'Portfolio Agent System Prompt',
+        key: 'portfolioCheckAgentSystemPrompt',
+        type: 'textarea',
+        required: false,
+        description: '基金诊断-Agent系统提示词（可选）。',
+        placeholder: '留空使用默认系统提示词',
+        default: '',
+        scope: 'server',
+        env: 'PORTFOLIO_CHECK_AGENT_SYSTEM_PROMPT',
+      },
     ],
   };
 
@@ -230,8 +433,59 @@ class ConfigManager {
         ? Math.floor(parsedMaxResults)
         : 6;
 
-    config.economy = config.economy ?? { tushareToken: '' };
+    config.economy = config.economy ?? {
+      tushareToken: '',
+      openbbMcpEnabled: false,
+      openbbMcpUrl: '',
+      openbbMcpApiKey: '',
+      openbbMcpPreferredTools: '',
+      openbbMcpMaxTools: 3,
+      minimaxMcpEnabled: false,
+      minimaxMcpUrl: '',
+      minimaxMcpApiKey: '',
+      minimaxMcpPreferredTools: '',
+      minimaxMcpMaxTools: 3,
+      fundUniverseLocalPath: '',
+      fundUniverseCompanyFilter: '',
+    };
     config.economy.tushareToken = config.economy.tushareToken ?? '';
+    const enabledRaw = config.economy.openbbMcpEnabled;
+    config.economy.openbbMcpEnabled =
+      enabledRaw === true || String(enabledRaw).toLowerCase() === 'true';
+    config.economy.openbbMcpUrl = config.economy.openbbMcpUrl ?? '';
+    config.economy.openbbMcpApiKey = config.economy.openbbMcpApiKey ?? '';
+    config.economy.openbbMcpPreferredTools =
+      config.economy.openbbMcpPreferredTools ?? '';
+    const parsedMaxTools = Number(config.economy.openbbMcpMaxTools);
+    config.economy.openbbMcpMaxTools =
+      Number.isFinite(parsedMaxTools) && parsedMaxTools > 0
+        ? Math.floor(parsedMaxTools)
+        : 3;
+    const minimaxEnabledRaw = config.economy.minimaxMcpEnabled;
+    config.economy.minimaxMcpEnabled =
+      minimaxEnabledRaw === true ||
+      String(minimaxEnabledRaw).toLowerCase() === 'true';
+    config.economy.minimaxMcpUrl = config.economy.minimaxMcpUrl ?? '';
+    config.economy.minimaxMcpApiKey = config.economy.minimaxMcpApiKey ?? '';
+    config.economy.minimaxMcpPreferredTools =
+      config.economy.minimaxMcpPreferredTools ?? '';
+    const parsedMiniMaxTools = Number(config.economy.minimaxMcpMaxTools);
+    config.economy.minimaxMcpMaxTools =
+      Number.isFinite(parsedMiniMaxTools) && parsedMiniMaxTools > 0
+        ? Math.floor(parsedMiniMaxTools)
+        : 3;
+    config.economy.fundUniverseLocalPath =
+      config.economy.fundUniverseLocalPath ?? '';
+    config.economy.fundUniverseCompanyFilter =
+      config.economy.fundUniverseCompanyFilter ?? '';
+    config.economy.eventImpactMarketViewPromptTemplate =
+      config.economy.eventImpactMarketViewPromptTemplate ?? '';
+    config.economy.eventImpactFundPanelPromptTemplate =
+      config.economy.eventImpactFundPanelPromptTemplate ?? '';
+    config.economy.portfolioCheckAgentPromptTemplate =
+      config.economy.portfolioCheckAgentPromptTemplate ?? '';
+    config.economy.portfolioCheckAgentSystemPrompt =
+      config.economy.portfolioCheckAgentSystemPrompt ?? '';
 
     return config;
   }
@@ -289,6 +543,78 @@ class ConfigManager {
     });
 
     this.currentConfig.modelProviders.push(...newProviders);
+
+    const roleProviders: ConfigModelProvider[] = [];
+
+    const upsertRoleProvider = (provider: ConfigModelProvider) => {
+      const exists = this.currentConfig.modelProviders.some((p) => p.id === provider.id);
+      if (!exists) roleProviders.push(provider);
+    };
+
+    const minimaxApiKey = process.env.MINIMAX_API_KEY || '';
+    if (minimaxApiKey) {
+      const modelKey = process.env.MINIMAX_DEFAULT_MODEL || 'MiniMax-M2.7';
+      const embeddingKey = process.env.MINIMAX_EMBEDDING_MODEL || 'embo-01';
+      const config = {
+        apiKey: minimaxApiKey,
+        baseURL: process.env.MINIMAX_BASE_URL || 'https://api.minimaxi.com/v1',
+      };
+      upsertRoleProvider({
+        id: 'dasheng-minimax-daily',
+        name: 'MiniMax 日常与多模态',
+        type: 'minimax',
+        chatModels: [{ name: 'MiniMax M2.7', key: modelKey }],
+        embeddingModels: [{ name: `MiniMax Embedding ${embeddingKey}`, key: embeddingKey }],
+        config,
+        hash: hashObj(config),
+      });
+    }
+
+    const giteeApiKey = process.env.GITEE_AI_API_KEY || '';
+    if (giteeApiKey) {
+      const config = {
+        apiKey: giteeApiKey,
+        baseURL: process.env.GITEE_AI_BASE_URL || 'https://ai.gitee.com/v1',
+      };
+      upsertRoleProvider({
+        id: 'dasheng-gitee-deep-research',
+        name: 'Gitee AI 高阶深度研究',
+        type: 'openai',
+        chatModels: [
+          {
+            name: 'DeepSeek V4 Flash',
+            key: process.env.GITEE_AI_DEEP_RESEARCH_MODEL || 'DeepSeek-V4-Flash',
+          },
+        ],
+        embeddingModels: [],
+        config,
+        hash: hashObj(config),
+      });
+    }
+
+    const siliconflowApiKey = process.env.SILICONFLOW_API_KEY || '';
+    if (siliconflowApiKey) {
+      const config = {
+        apiKey: siliconflowApiKey,
+        baseURL: process.env.SILICONFLOW_BASE_URL || 'https://api.siliconflow.cn/v1',
+      };
+      upsertRoleProvider({
+        id: 'dasheng-siliconflow-embedding',
+        name: 'SiliconFlow Embedding',
+        type: 'openai',
+        chatModels: [],
+        embeddingModels: [
+          {
+            name: 'BAAI bge-m3',
+            key: process.env.SILICONFLOW_EMBEDDING_MODEL || 'BAAI/bge-m3',
+          },
+        ],
+        config,
+        hash: hashObj(config),
+      });
+    }
+
+    this.currentConfig.modelProviders.push(...roleProviders);
 
     /* search section */
     this.uiConfigSections.search.forEach((f) => {

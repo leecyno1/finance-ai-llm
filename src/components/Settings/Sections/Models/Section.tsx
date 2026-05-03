@@ -21,11 +21,18 @@ const Models = ({
     <div className="flex-1 space-y-6 overflow-y-auto py-6">
       <div className="flex flex-col px-6 gap-y-4">
         <h3 className="text-xs lg:text-xs text-black/70 dark:text-white/70">
-          Select models
+          模型角色
         </h3>
+        <div className="rounded-xl border border-red-500/15 bg-red-500/[0.04] px-4 py-3 text-[11px] leading-5 text-black/60 dark:text-white/60">
+          <p><span className="font-semibold text-red-700 dark:text-red-300">日常对话 / 多模态：</span>固定使用 MiniMax-M2.7。</p>
+          <p><span className="font-semibold text-blue-700 dark:text-blue-300">高阶深度研究：</span>Academic 或 Deep Research 模式自动使用 Gitee AI DeepSeek-V4-Flash。</p>
+          <p><span className="font-semibold text-emerald-700 dark:text-emerald-300">附件与检索向量：</span>优先使用 SiliconFlow BAAI/bge-m3，缺失时回退 MiniMax embedding。</p>
+        </div>
         <ModelSelect
-          providers={values.filter((p) =>
-            p.chatModels.some((m) => m.key != 'error'),
+          providers={values.filter(
+            (p) =>
+              p.chatModels.some((m) => m.key != 'error') &&
+              !/gitee|deepseek|深度研究|高阶/i.test(p.name),
           )}
           type="chat"
         />
@@ -39,7 +46,7 @@ const Models = ({
       <div className="border-t border-light-200 dark:border-dark-200" />
       <div className="flex flex-row justify-between items-center px-6 ">
         <p className="text-xs lg:text-xs text-black/70 dark:text-white/70">
-          Manage connections
+管理模型连接
         </p>
         <AddProvider modelProviders={fields} setProviders={setProviders} />
       </div>

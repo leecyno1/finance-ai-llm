@@ -1,10 +1,10 @@
-# Dr.Lemon's Architecture
+# 大圣之怒's Architecture
 
-Dr.Lemon's architecture consists of the following key components:
+大圣之怒's architecture consists of the following key components:
 
-1. **User Interface**: A web-based interface that allows users to interact with Dr.Lemon for searching images, videos, and much more.
-2. **Agent/Chains**: These components predict Dr.Lemon's next actions, understand user queries, and decide whether a web search is necessary.
-3. **SearXNG**: A metadata search engine used by Dr.Lemon to search the web for sources.
+1. **User Interface**: A web-based interface that allows users to interact with 大圣之怒 for searching images, videos, and much more.
+2. **Agent/Chains**: These components predict 大圣之怒's next actions, understand user queries, and decide whether a web search is necessary.
+3. **SearXNG**: A metadata search engine used by 大圣之怒 to search the web for sources.
 4. **LLMs (Large Language Models)**: Utilized by agents and chains for tasks like understanding content, writing responses, and citing sources. Examples include Claude, GPTs, etc.
 5. **Embedding Models**: To improve the accuracy of search results, embedding models re-rank the results using similarity search algorithms such as cosine similarity and dot product distance.
 

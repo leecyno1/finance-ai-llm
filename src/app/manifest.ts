@@ -2,10 +2,10 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Dr.Lemon · AI金融研究',
-    short_name: 'Dr.Lemon',
+    name: '大圣之怒 · AI金融研究',
+    short_name: '大圣之怒',
     description:
-      'Dr.Lemon 是面向金融投研的 AI 助手：支持联网检索、财经快讯与宏观数据。',
+      '大圣之怒 是面向金融投研的 AI 助手：支持联网检索、财经快讯与宏观数据。',
     start_url: '/',
     display: 'standalone',
     background_color: '#0a0a0a',

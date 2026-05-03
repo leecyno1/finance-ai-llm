@@ -1,4 +1,5 @@
 /* eslint-disable no-console */
+const os = require('node:os');
 
 const SHANGHAI_UTC_OFFSET_HOURS = 8;
 const SHANGHAI_TZ = 'Asia/Shanghai';
@@ -54,6 +55,7 @@ const fetchWithTimeout = async (url, timeoutMs = 15000) => {
   try {
     const res = await fetch(url, {
       signal: controller.signal,
+      cache: 'no-store',
       headers: { 'user-agent': 'finance-ai-llm/cache-worker' },
     });
     return res;
@@ -62,7 +64,34 @@ const fetchWithTimeout = async (url, timeoutMs = 15000) => {
   }
 };
 
-const baseUrl = process.env.CACHE_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`;
+const buildBaseUrlCandidates = () => {
+  const port = process.env.PORT || 3000;
+  const fromEnv = process.env.CACHE_BASE_URL || '';
+  const hostName = os.hostname();
+  const ips = Object.values(os.networkInterfaces() || {})
+    .flat()
+    .map((x) => x?.address)
+    .filter((x) => typeof x === 'string' && x && x !== '127.0.0.1');
+
+  const raw = [
+    fromEnv,
+    hostName ? `http://${hostName}:${port}` : '',
+    ...ips.map((ip) => `http://${ip}:${port}`),
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+  ].filter(Boolean);
+  const seen = new Set();
+  return raw
+    .map((x) => String(x).trim().replace(/\/+$/, ''))
+    .filter((x) => {
+      if (!x) return false;
+      if (seen.has(x)) return false;
+      seen.add(x);
+      return true;
+    });
+};
+
+const baseUrls = buildBaseUrlCandidates();
 const enabled = (process.env.CACHE_WORKER_ENABLED || 'true').toLowerCase() !== 'false';
 
 const state = {
@@ -72,12 +101,73 @@ const state = {
   inFlightEventImpact: false,
 };
 
+const classifyRequestError = (err) => {
+  if (!err) {
+    return { type: 'unknown', message: 'unknown error' };
+  }
+
+  if (err.name === 'AbortError') {
+    return { type: 'network_timeout', message: err.message || 'request timeout' };
+  }
+
+  const message = err?.message || String(err);
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(message)) {
+    return { type: 'dns', message };
+  }
+
+  if (/ECONNREFUSED|ECONNRESET|fetch failed|socket hang up/i.test(message)) {
+    return { type: 'network', message };
+  }
+
+  if (/parse|json|unexpected token/i.test(message)) {
+    return { type: 'parse', message };
+  }
+
+  return { type: 'unknown', message };
+};
+
+const requestEndpoint = async (path, timeoutMs, retries = 2) => {
+  let lastErr = null;
+  let lastResponse = null;
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    for (const baseUrl of baseUrls) {
+      try {
+        const res = await fetchWithTimeout(`${baseUrl}${path}`, timeoutMs);
+        if (res.ok) return { res, baseUrl, attempt, failure: null };
+        lastResponse = {
+          res,
+          baseUrl,
+          attempt,
+          failure: {
+            type: 'non_2xx',
+            status: res.status,
+            message: `HTTP ${res.status}`,
+          },
+        };
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+
+    if (attempt < retries) {
+      await sleep(Math.min(3000, 500 * 2 ** (attempt - 1)));
+    }
+  }
+
+  if (lastResponse) return lastResponse;
+  const fallbackErr = lastErr || new Error(`request failed for ${path}`);
+  const wrapped = new Error(fallbackErr?.message || String(fallbackErr));
+  wrapped.classification = classifyRequestError(fallbackErr);
+  throw wrapped;
+};
+
 const waitForServer = async () => {
   const maxWaitMs = 90_000;
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
     try {
-      const res = await fetchWithTimeout(`${baseUrl}/api/config`, 5000);
+      const { res } = await requestEndpoint('/api/config', 5000, 2);
       if (res.ok) return true;
     } catch {}
     await sleep(1000);
@@ -90,14 +180,26 @@ const warmNews = async (reason) => {
   state.inFlightNews = true;
   const startedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(`${baseUrl}/api/news/finance`, 25_000);
+    const { res, baseUrl, attempt, failure } = await requestEndpoint(
+      '/api/news/finance',
+      25_000,
+      3,
+    );
     const text = await res.text();
     console.log(
-      `[cache-worker] news ${reason} -> ${res.status} (${Date.now() - startedAt}ms)`,
+      `[cache-worker] news ${reason} -> ${res.status} (${Date.now() - startedAt}ms) [${baseUrl}] attempt=${attempt}`,
     );
-    if (!res.ok) console.warn('[cache-worker] news response:', text.slice(0, 300));
+    if (!res.ok) {
+      console.warn(
+        `[cache-worker] news response failed [type=${failure?.type || 'non_2xx'} status=${res.status}] ${text.slice(0, 300)}`,
+      );
+    }
   } catch (err) {
-    console.warn('[cache-worker] news failed:', err?.message || err);
+    const cls = err?.classification || classifyRequestError(err);
+    console.warn(
+      `[cache-worker] news failed [type=${cls.type}]`,
+      cls.message || err?.message || err,
+    );
   } finally {
     state.inFlightNews = false;
   }
@@ -108,14 +210,26 @@ const warmEconomy = async (reason) => {
   state.inFlightEconomy = true;
   const startedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(`${baseUrl}/api/economy/summary`, 60_000);
+    const { res, baseUrl, attempt, failure } = await requestEndpoint(
+      '/api/economy/summary',
+      60_000,
+      3,
+    );
     const text = await res.text();
     console.log(
-      `[cache-worker] economy ${reason} -> ${res.status} (${Date.now() - startedAt}ms)`,
+      `[cache-worker] economy ${reason} -> ${res.status} (${Date.now() - startedAt}ms) [${baseUrl}] attempt=${attempt}`,
     );
-    if (!res.ok) console.warn('[cache-worker] economy response:', text.slice(0, 300));
+    if (!res.ok) {
+      console.warn(
+        `[cache-worker] economy response failed [type=${failure?.type || 'non_2xx'} status=${res.status}] ${text.slice(0, 300)}`,
+      );
+    }
   } catch (err) {
-    console.warn('[cache-worker] economy failed:', err?.message || err);
+    const cls = err?.classification || classifyRequestError(err);
+    console.warn(
+      `[cache-worker] economy failed [type=${cls.type}]`,
+      cls.message || err?.message || err,
+    );
   } finally {
     state.inFlightEconomy = false;
   }
@@ -126,16 +240,26 @@ const warmEventImpact = async (reason) => {
   state.inFlightEventImpact = true;
   const startedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(`${baseUrl}/api/finance/event-impact?limit=120`, 35_000);
+    const { res, baseUrl, attempt, failure } = await requestEndpoint(
+      '/api/finance/event-impact?limit=120',
+      35_000,
+      3,
+    );
     const text = await res.text();
     console.log(
-      `[cache-worker] event-impact ${reason} -> ${res.status} (${Date.now() - startedAt}ms)`,
+      `[cache-worker] event-impact ${reason} -> ${res.status} (${Date.now() - startedAt}ms) [${baseUrl}] attempt=${attempt}`,
     );
     if (!res.ok) {
-      console.warn('[cache-worker] event-impact response:', text.slice(0, 300));
+      console.warn(
+        `[cache-worker] event-impact response failed [type=${failure?.type || 'non_2xx'} status=${res.status}] ${text.slice(0, 300)}`,
+      );
     }
   } catch (err) {
-    console.warn('[cache-worker] event-impact failed:', err?.message || err);
+    const cls = err?.classification || classifyRequestError(err);
+    console.warn(
+      `[cache-worker] event-impact failed [type=${cls.type}]`,
+      cls.message || err?.message || err,
+    );
   } finally {
     state.inFlightEventImpact = false;
   }
@@ -192,7 +316,7 @@ const main = async () => {
   }
 
   console.log('[cache-worker] starting...');
-  console.log('[cache-worker] baseUrl:', baseUrl);
+  console.log('[cache-worker] baseUrls:', baseUrls.join(', '));
 
   const ready = await waitForServer();
   if (!ready) {
@@ -221,6 +345,10 @@ const main = async () => {
   // Economy market snapshot: keep rolling widgets fresh (10 minutes).
   scheduleEveryMs('economy@10m', 10 * 60 * 1000, () => warmEconomy('interval@10m'));
 
+  // News heartbeat: keep warm logs/health visible and cache hit path active.
+  // Actual finance news payload still rotates by 6-hour slot in the API layer.
+  scheduleEveryMs('news@10m', 10 * 60 * 1000, () => warmNews('interval@10m'));
+
   // Event impact matrix: keep this lightweight cache warm for public homepage/modules.
   scheduleEveryMs('event-impact@10m', 10 * 60 * 1000, () => warmEventImpact('interval@10m'));
 
@@ -230,7 +358,14 @@ const main = async () => {
   console.log('[cache-worker] running');
 };
 
-main().catch((err) => {
-  console.error('[cache-worker] fatal:', err);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('[cache-worker] fatal:', err);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  buildBaseUrlCandidates,
+  classifyRequestError,
+};

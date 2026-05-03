@@ -1,0 +1,44 @@
+# Docker Compose 配置
+# 原生 MiniMax + Next.js + SearXNG
+
+services:
+  # Next.js 应用服务
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: finance-ai-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY}
+      - MINIMAX_BASE_URL=${MINIMAX_BASE_URL:-https://api.minimaxi.com/v1}
+      - MINIMAX_DEFAULT_MODEL=${MINIMAX_DEFAULT_MODEL:-MiniMax-M2.7}
+      - MINIMAX_EMBEDDING_MODEL=${MINIMAX_EMBEDDING_MODEL:-embo-01}
+      - GITEE_AI_API_KEY=${GITEE_AI_API_KEY}
+      - GITEE_AI_BASE_URL=${GITEE_AI_BASE_URL:-https://ai.gitee.com/v1}
+      - GITEE_AI_DEEP_RESEARCH_MODEL=${GITEE_AI_DEEP_RESEARCH_MODEL:-DeepSeek-V4-Flash}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY}
+      - SILICONFLOW_BASE_URL=${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      - SILICONFLOW_EMBEDDING_MODEL=${SILICONFLOW_EMBEDDING_MODEL:-BAAI/bge-m3}
+      - TUSHARE_TOKEN=${TUSHARE_TOKEN}
+      - SEARXNG_API_URL=${SEARXNG_API_URL}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  # SearXNG 搜索引擎（可选）
+  searxng:
+    image: searxng/searxng:latest
+    container_name: finance-ai-searxng
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    restart: unless-stopped
+
+networks:
+  default:
+    name: finance-ai-network

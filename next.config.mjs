@@ -10,7 +10,12 @@ const nextConfig = {
       },
     ],
   },
-  serverExternalPackages: ['pdf-parse'],
+  serverExternalPackages: [
+    'pdf-parse',
+    'playwright',
+    '@mozilla/readability',
+    'jsdom',
+  ],
   outputFileTracingIncludes: {
     '/api/**': [
       './node_modules/@napi-rs/canvas/**',

@@ -7,7 +7,8 @@ import MessageBoxLoading from './MessageBoxLoading';
 import { useChat } from '@/lib/hooks/useChat';
 
 const Chat = () => {
-  const { sections, chatTurns, loading, messageAppeared } = useChat();
+  const { sections, chatTurns, loading, loadingStatus, messageAppeared } =
+    useChat();
 
   const [dividerWidth, setDividerWidth] = useState(0);
   const dividerRef = useRef<HTMLDivElement | null>(null);
@@ -35,7 +36,7 @@ const Chat = () => {
     };
 
     if (chatTurns.length === 1) {
-      document.title = `${chatTurns[0].content.substring(0, 30)} - Dr.Lemon`;
+      document.title = `${chatTurns[0].content.substring(0, 30)} - 大圣之怒`;
     }
 
     const messageEndBottom =
@@ -71,7 +72,9 @@ const Chat = () => {
           </Fragment>
         );
       })}
-      {loading && !messageAppeared && <MessageBoxLoading />}
+      {loading && !messageAppeared && (
+        <MessageBoxLoading status={loadingStatus} />
+      )}
       <div ref={messageEnd} className="h-0" />
       {dividerWidth > 0 && (
         <div

@@ -4,6 +4,13 @@ services:
     image: finance-ai-llm:latest
     ports:
       - '3000:3000'
+      - '3001:3000'
+    environment:
+      - ADMIN_ACCESS_TOKEN=${ADMIN_ACCESS_TOKEN:-}
+      - MINIMAX_MCP_ENABLED=${MINIMAX_MCP_ENABLED:-true}
+      - MINIMAX_MCP_URL=${MINIMAX_MCP_URL:-http://127.0.0.1:18190/rest}
+      - MINIMAX_MCP_MODE=${MINIMAX_MCP_MODE:-media}
+      - MINIMAX_MCP_PORT=${MINIMAX_MCP_PORT:-18190}
     volumes:
       - data:/home/perplexica/data
       - uploads:/home/perplexica/uploads

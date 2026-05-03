@@ -3,6 +3,12 @@ import prompts from '../prompts';
 import EventImpactSearchHandler from './handlers/eventImpactSearch';
 import PortfolioCheckSearchHandler from './handlers/portfolioCheckSearch';
 
+export type SearchHandlerCapabilities = {
+  requiresModels: boolean;
+  supportsResearchTimeline: boolean;
+  deterministic: boolean;
+};
+
 export const searchHandlers: Record<string, MetaSearchAgentType> = {
   webSearch: new MetaSearchAgent({
     activeEngines: [],
@@ -61,3 +67,40 @@ export const searchHandlers: Record<string, MetaSearchAgentType> = {
   eventImpactMatrix: new EventImpactSearchHandler(),
   portfolioCheck: new PortfolioCheckSearchHandler(),
 };
+
+const DEFAULT_HANDLER_CAPABILITIES: SearchHandlerCapabilities = {
+  requiresModels: true,
+  supportsResearchTimeline: true,
+  deterministic: false,
+};
+
+export const searchHandlerCapabilities: Record<
+  string,
+  SearchHandlerCapabilities
+> = {
+  webSearch: DEFAULT_HANDLER_CAPABILITIES,
+  academicSearch: DEFAULT_HANDLER_CAPABILITIES,
+  writingAssistant: {
+    requiresModels: true,
+    supportsResearchTimeline: false,
+    deterministic: false,
+  },
+  wolframAlphaSearch: DEFAULT_HANDLER_CAPABILITIES,
+  youtubeSearch: DEFAULT_HANDLER_CAPABILITIES,
+  redditSearch: DEFAULT_HANDLER_CAPABILITIES,
+  eventImpactMatrix: {
+    requiresModels: false,
+    supportsResearchTimeline: true,
+    deterministic: true,
+  },
+  portfolioCheck: {
+    requiresModels: false,
+    supportsResearchTimeline: false,
+    deterministic: true,
+  },
+};
+
+export const getSearchHandlerCapabilities = (
+  focusMode: string,
+): SearchHandlerCapabilities =>
+  searchHandlerCapabilities[focusMode] ?? DEFAULT_HANDLER_CAPABILITIES;

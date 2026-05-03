@@ -1,6 +1,7 @@
 import {
   BadgePercent,
   Globe,
+  ImagePlus,
   Pencil,
   SwatchBook,
   Table2,
@@ -17,7 +18,7 @@ import { SiReddit, SiYoutube } from '@icons-pack/react-simple-icons';
 import { Fragment } from 'react';
 import { useChat } from '@/lib/hooks/useChat';
 
-const focusModes = [
+export const focusModes = [
   {
     key: 'webSearch',
     title: 'All',
@@ -26,15 +27,21 @@ const focusModes = [
   },
   {
     key: 'eventImpactMatrix',
-    title: '事件矩阵',
-    description: '新闻映射行业/资产，输出方向与置信度',
+    title: '事件驱动',
+    description: '提炼高重要度事件并映射行业/资产影响',
     icon: <Table2 size={16} />,
   },
   {
     key: 'portfolioCheck',
-    title: '组合体检',
-    description: '输入持仓后输出暴露、敏感因子和再平衡建议',
+    title: '基金诊断',
+    description: '输入持仓后输出暴露、因子与可执行调仓建议',
     icon: <BriefcaseBusiness size={16} />,
+  },
+  {
+    key: 'minimaxMedia',
+    title: '多模态',
+    description: '切换到识图/生图（生视频入口后续开放）',
+    icon: <ImagePlus size={16} />,
   },
   {
     key: 'academicSearch',
@@ -68,8 +75,18 @@ const focusModes = [
   },
 ];
 
+export const quickFocusModeKeys = [
+  'minimaxMedia',
+  'writingAssistant',
+  'academicSearch',
+] as const;
+
 const Focus = () => {
   const { focusMode, setFocusMode } = useChat();
+  const popoverModes = focusModes.filter(
+    (mode) =>
+      !(quickFocusModeKeys as readonly string[]).includes(String(mode.key)),
+  );
 
   return (
     <Popover className="relative w-full max-w-[15rem] md:max-w-md lg:max-w-lg">
@@ -77,15 +94,9 @@ const Focus = () => {
         type="button"
         className="active:border-none hover:bg-light-200 hover:dark:bg-dark-200 p-2 rounded-lg focus:outline-none headless-open:text-black dark:headless-open:text-white text-black/50 dark:text-white/50 active:scale-95 transition duration-200 hover:text-black dark:hover:text-white"
       >
-        {focusMode !== 'webSearch' ? (
-          <div className="flex flex-row items-center space-x-1">
-            {focusModes.find((mode) => mode.key === focusMode)?.icon}
-          </div>
-        ) : (
-          <div className="flex flex-row items-center space-x-1">
-            <Globe size={16} />
-          </div>
-        )}
+        <div className="flex flex-row items-center space-x-1">
+          <Globe size={16} />
+        </div>
       </PopoverButton>
       <Transition
         as={Fragment}
@@ -98,7 +109,7 @@ const Focus = () => {
       >
         <PopoverPanel className="absolute z-10 w-64 md:w-[560px] -right-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 bg-light-primary dark:bg-dark-primary border rounded-lg border-light-200 dark:border-dark-200 w-full p-4 max-h-[260px] md:max-h-none overflow-y-auto">
-            {focusModes.map((mode, i) => (
+            {popoverModes.map((mode, i) => (
               <PopoverButton
                 onClick={() => setFocusMode(mode.key)}
                 key={i}
@@ -113,7 +124,7 @@ const Focus = () => {
                   className={cn(
                     'flex flex-row items-center space-x-1',
                     focusMode === mode.key
-                      ? 'text-[#24A0ED]'
+                      ? 'text-rose-600 dark:text-rose-300'
                       : 'text-black dark:text-white',
                   )}
                 >

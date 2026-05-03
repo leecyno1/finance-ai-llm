@@ -12,12 +12,43 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { MinimalProvider } from '@/lib/models/types';
 import { useChat } from '@/lib/hooks/useChat';
 
+const dedupeModels = (models: { key: string; name: string }[]) => {
+  const seen = new Set<string>();
+  return models.filter((m) => {
+    const key = String(m.key || '').trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const normalizeProviders = (list: MinimalProvider[]) => {
+  const byId = new Map<string, MinimalProvider>();
+
+  for (const p of list) {
+    const prev = byId.get(p.id);
+    byId.set(p.id, {
+      id: p.id,
+      name: p.name,
+      chatModels: dedupeModels([...(prev?.chatModels || []), ...(p.chatModels || [])]),
+      embeddingModels: dedupeModels([
+        ...(prev?.embeddingModels || []),
+        ...(p.embeddingModels || []),
+      ]),
+    });
+  }
+
+  return Array.from(byId.values());
+};
+
 const ModelSelector = () => {
   const [providers, setProviders] = useState<MinimalProvider[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
   const { setChatModelProvider, chatModelProvider } = useChat();
+  const isMiniMaxProvider = (provider: MinimalProvider) =>
+    String(provider.name || '').toLowerCase().includes('minimax');
 
   useEffect(() => {
     const loadProviders = async () => {
@@ -30,7 +61,7 @@ const ModelSelector = () => {
         }
 
         const data: { providers: MinimalProvider[] } = await res.json();
-        setProviders(data.providers);
+        setProviders(normalizeProviders(data.providers || []));
       } catch (error) {
         console.error('Error loading providers:', error);
       } finally {
@@ -69,13 +100,18 @@ const ModelSelector = () => {
   const filteredProviders = orderedProviders
     .map((provider) => ({
       ...provider,
-      chatModels: provider.chatModels.filter(
+      chatModels: provider.chatModels
+        .filter((model) => model.key === 'MiniMax-M2.7')
+        .filter(
         (model) =>
           model.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
           provider.name.toLowerCase().includes(searchQuery.toLowerCase()),
-      ),
+        ),
     }))
-    .filter((provider) => provider.chatModels.length > 0);
+    .filter(
+      (provider) =>
+        isMiniMaxProvider(provider) && provider.chatModels.length > 0,
+    );
 
   return (
     <Popover className="relative w-full max-w-[15rem] md:max-w-md lg:max-w-lg">

@@ -5,6 +5,7 @@ import {
   ChatTurn,
   Message,
   SourceMessage,
+  StatusMessage,
   SuggestionMessage,
   UserMessage,
 } from '@/components/ChatWindow';
@@ -28,6 +29,7 @@ import { getSuggestions } from '../actions';
 import { MinimalProvider } from '../models/types';
 import { getAutoMediaSearch, getLanguage } from '../config/clientRegistry';
 import { parseLooseJson } from '../utils/json';
+import { sanitizeLlmOutput } from '../utils/llmOutput';
 
 export type Section = {
   userMessage: UserMessage;
@@ -35,6 +37,7 @@ export type Section = {
   parsedAssistantMessage: string | undefined;
   speechMessage: string | undefined;
   sourceMessage: SourceMessage | undefined;
+  statusMessages: StatusMessage[];
   thinkingEnded: boolean;
   suggestions?: string[];
 };
@@ -51,6 +54,7 @@ type ChatContext = {
   optimizationMode: string;
   isMessagesLoaded: boolean;
   loading: boolean;
+  loadingStatus: string;
   notFound: boolean;
   messageAppeared: boolean;
   isReady: boolean;
@@ -115,6 +119,12 @@ const checkConfig = async (
 
     const data = await res.json();
     const providers: MinimalProvider[] = data.providers;
+    const isMiniMaxProvider = (p: MinimalProvider) =>
+      String(p.name || '').toLowerCase().includes('minimax');
+    const hasMiniMaxM27 = (p: MinimalProvider) =>
+      p.chatModels.some((m) => m.key === 'MiniMax-M2.7');
+    const hasBgeM3 = (p: MinimalProvider) =>
+      p.embeddingModels.some((m) => m.key === 'BAAI/bge-m3');
 
     if (providers.length === 0) {
       throw new Error(
@@ -122,11 +132,21 @@ const checkConfig = async (
       );
     }
 
-    const preferredChatModelProvider = providers.find(
-      (p) => p.id === chatModelProviderId && p.chatModels.length > 0,
+    const preferredChatModelProvider = providers.find((p) => {
+      if (p.id !== chatModelProviderId || p.chatModels.length === 0) return false;
+      if (!isMiniMaxProvider(p)) return false;
+      return hasMiniMaxM27(p);
+    });
+    const minimaxM27Provider = providers.find(
+      (p) => isMiniMaxProvider(p) && hasMiniMaxM27(p),
+    );
+    const minimaxFallbackProvider = providers.find(
+      (p) => isMiniMaxProvider(p) && p.chatModels.length > 0,
     );
     const chatModelProvider =
       preferredChatModelProvider ??
+      minimaxM27Provider ??
+      minimaxFallbackProvider ??
       providers.find((p) => p.chatModels.length > 0);
 
     if (!chatModelProvider) {
@@ -138,6 +158,7 @@ const checkConfig = async (
     chatModelProviderId = chatModelProvider.id;
 
     const chatModel =
+      chatModelProvider.chatModels.find((m) => m.key === 'MiniMax-M2.7') ??
       chatModelProvider.chatModels.find((m) => m.key === chatModelKey) ??
       chatModelProvider.chatModels[0];
     chatModelKey = chatModel.key;
@@ -146,8 +167,14 @@ const checkConfig = async (
       (p) =>
         p.id === embeddingModelProviderId && p.embeddingModels.length > 0,
     );
+    const bgeEmbeddingModelProvider = providers.find(hasBgeM3);
+    const minimaxEmbeddingModelProvider = providers.find(
+      (p) => isMiniMaxProvider(p) && p.embeddingModels.length > 0,
+    );
     const embeddingModelProvider =
       preferredEmbeddingModelProvider ??
+      bgeEmbeddingModelProvider ??
+      minimaxEmbeddingModelProvider ??
       providers.find((p) => p.embeddingModels.length > 0);
 
     if (!embeddingModelProvider) {
@@ -159,9 +186,11 @@ const checkConfig = async (
     embeddingModelProviderId = embeddingModelProvider.id;
 
     const embeddingModel =
+      embeddingModelProvider.embeddingModels.find((m) => m.key === 'BAAI/bge-m3') ??
       embeddingModelProvider.embeddingModels.find(
         (m) => m.key === embeddingModelKey,
-      ) ?? embeddingModelProvider.embeddingModels[0];
+      ) ??
+      embeddingModelProvider.embeddingModels[0];
     embeddingModelKey = embeddingModel.key;
 
     localStorage.setItem('chatModelKey', chatModelKey);
@@ -191,7 +220,7 @@ const checkConfig = async (
 
     if (isNoModelError) {
       // 没有配置任何模型：不把它当成“服务器错误”，保持主界面可用，
-      // 用户仍然可以看到 Dr.Lemon 的主页，只是在发送消息时需要先去设置里配置模型。
+      // 用户仍然可以看到 大圣之怒 的主页，只是在发送消息时需要先去设置里配置模型。
       toast.error(
         '尚未配置可用的大模型，请在设置中添加模型提供商后再开始对话。',
       );
@@ -212,9 +241,9 @@ const loadMessages = async (
   setIsMessagesLoaded: (loaded: boolean) => void,
   setChatHistory: (history: [string, string][]) => void,
   setFocusMode: (mode: string) => void,
-  setNotFound: (notFound: boolean) => void,
   setFiles: (files: File[]) => void,
   setFileIds: (fileIds: string[]) => void,
+  onChatNotFound: () => void,
 ) => {
   const res = await fetch(`/api/chats/${chatId}`, {
     method: 'GET',
@@ -224,8 +253,7 @@ const loadMessages = async (
   });
 
   if (res.status === 404) {
-    setNotFound(true);
-    setIsMessagesLoaded(true);
+    onChatNotFound();
     return;
   }
 
@@ -275,6 +303,7 @@ export const chatContext = createContext<ChatContext>({
   isMessagesLoaded: false,
   isReady: false,
   loading: false,
+  loadingStatus: '',
   messageAppeared: false,
   messages: [],
   chatTurns: [],
@@ -304,6 +333,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const [newChatCreated, setNewChatCreated] = useState(false);
 
   const [loading, setLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState('');
   const [messageAppeared, setMessageAppeared] = useState(false);
 
   const [chatHistory, setChatHistory] = useState<[string, string][]>([]);
@@ -313,7 +343,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const [fileIds, setFileIds] = useState<string[]>([]);
 
   const [focusMode, setFocusMode] = useState('webSearch');
-  const [optimizationMode, setOptimizationMode] = useState('speed');
+  const [optimizationMode, setOptimizationMode] = useState('balanced');
 
   const [isMessagesLoaded, setIsMessagesLoaded] = useState(false);
 
@@ -340,6 +370,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const messageAppearedRef = useRef<boolean>(false);
   const chatHistoryRef = useRef<[string, string][]>([]);
   const handledMessageEndRef = useRef<Set<string>>(new Set());
+  const handledInvalidChatRef = useRef<Set<string>>(new Set());
 
   const chatTurns = useMemo((): ChatTurn[] => {
     return messages.filter(
@@ -370,26 +401,21 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
             m.sources &&
             (nextUserMessageIndex === -1 || j < nextUserMessageIndex),
         ) as SourceMessage | undefined;
+        const statusMessages = messages.filter(
+          (m, j) =>
+            j > i &&
+            m.role === 'status' &&
+            (nextUserMessageIndex === -1 || j < nextUserMessageIndex),
+        ) as StatusMessage[];
 
         let thinkingEnded = false;
-        let processedMessage = aiMessage?.content ?? '';
-        let speechMessage = aiMessage?.content ?? '';
+        let processedMessage = sanitizeLlmOutput(aiMessage?.content ?? '');
+        let speechMessage = sanitizeLlmOutput(aiMessage?.content ?? '');
         let suggestions: string[] = [];
 
         if (aiMessage) {
           const citationRegex = /\[([^\]]+)\]/g;
           const regex = /\[(\d+)\]/g;
-
-          if (processedMessage.includes('<think>')) {
-            const openThinkTag =
-              processedMessage.match(/<think>/g)?.length || 0;
-            const closeThinkTag =
-              processedMessage.match(/<\/think>/g)?.length || 0;
-
-            if (openThinkTag && !closeThinkTag) {
-              processedMessage += '</think> <a> </a>';
-            }
-          }
 
           if (aiMessage.content.includes('</think>')) {
             thinkingEnded = true;
@@ -451,6 +477,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           userMessage: msg,
           assistantMessage: aiMessage,
           sourceMessage: sourceMessage,
+          statusMessages,
           parsedAssistantMessage: processedMessage,
           speechMessage,
           thinkingEnded,
@@ -486,6 +513,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   }, [params.chatId, chatId]);
 
   useEffect(() => {
+    if (!params.chatId || pathname === '/') {
+      handledInvalidChatRef.current.clear();
+    }
+  }, [params.chatId, pathname]);
+
+  useEffect(() => {
     if (
       chatId &&
       !newChatCreated &&
@@ -498,9 +531,39 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         setIsMessagesLoaded,
         setChatHistory,
         setFocusMode,
-        setNotFound,
         setFiles,
         setFileIds,
+        () => {
+          const invalidId = params.chatId || chatId;
+
+          // 避免同一个无效 chatId 重复触发重定向，导致页面闪烁。
+          if (invalidId && handledInvalidChatRef.current.has(invalidId)) {
+            return;
+          }
+          if (invalidId) {
+            handledInvalidChatRef.current.add(invalidId);
+          }
+
+          const newId = crypto.randomBytes(20).toString('hex');
+
+          setNotFound(false);
+          setMessages([]);
+          setChatHistory([]);
+          setFiles([]);
+          setFileIds([]);
+          setIsMessagesLoaded(true);
+          setNewChatCreated(true);
+          setLoading(false);
+          setLoadingStatus('');
+          setMessageAppeared(false);
+          messageAppearedRef.current = false;
+          handledMessageEndRef.current.clear();
+          setChatId(newId);
+
+          if (pathname !== '/') {
+            router.replace('/');
+          }
+        },
       );
     } else if (!chatId) {
       setNewChatCreated(true);
@@ -540,6 +603,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       setNotFound(false);
       setNewChatCreated(true);
       setLoading(false);
+      setLoadingStatus('');
       setMessageAppeared(false);
       messageAppearedRef.current = false;
       handledMessageEndRef.current.clear();
@@ -597,6 +661,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     }
 
     setLoading(true);
+    setLoadingStatus('正在检索网页信息...');
     setMessageAppeared(false);
 
     // 首次发起对话时，从首页导航到对话页 `/c/[chatId]`，
@@ -607,6 +672,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
     let recievedMessage = '';
     let added = false;
+    let streamCompleted = false;
 
     messageId = messageId ?? crypto.randomBytes(7).toString('hex');
     handledMessageEndRef.current.delete(messageId);
@@ -641,8 +707,40 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     const messageHandler = async (data: any) => {
       if (data.type === 'error') {
         toast.error(data.data);
+        streamCompleted = true;
         setLoading(false);
+        setLoadingStatus('');
         return;
+      }
+
+      if (data.type === 'status') {
+        const text = String(data.data ?? '').trim();
+        if (text) {
+          setLoadingStatus(text);
+          setMessages((prevMessages) => {
+            const lastMessage = prevMessages[prevMessages.length - 1];
+            if (
+              lastMessage &&
+              lastMessage.role === 'status' &&
+              lastMessage.content === text
+            ) {
+              return prevMessages;
+            }
+
+            return [
+              ...prevMessages,
+              {
+                messageId: `${data.messageId || messageId}-status-${crypto
+                  .randomBytes(4)
+                  .toString('hex')}`,
+                chatId: chatId!,
+                role: 'status',
+                content: text,
+                createdAt: new Date(),
+              },
+            ];
+          });
+        }
       }
 
       if (data.type === 'sources') {
@@ -658,6 +756,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         ]);
         if (Array.isArray(data.data) && data.data.length > 0) {
           setMessageAppeared(true);
+          setLoadingStatus('正在整合来源并生成回答...');
         }
       }
 
@@ -675,6 +774,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
           ]);
           added = true;
           setMessageAppeared(true);
+          setLoadingStatus('正在生成回答...');
         } else {
           setMessages((prev) =>
             prev.map((message) => {
@@ -693,6 +793,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       }
 
       if (data.type === 'messageEnd') {
+        streamCompleted = true;
         if (handledMessageEndRef.current.has(messageId)) {
           return;
         }
@@ -709,6 +810,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         });
 
         setLoading(false);
+        setLoadingStatus('');
 
         const lastMsg = messagesRef.current[messagesRef.current.length - 1];
 
@@ -763,82 +865,117 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
     const messageIndex = messages.findIndex((m) => m.messageId === messageId);
 
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        content: message,
-        message: {
-          messageId: messageId,
-          chatId: chatId!,
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           content: message,
-        },
-        chatId: chatId!,
-        files: fileIds,
-        focusMode: focusMode,
-        optimizationMode: optimizationMode,
-        history: rewrite
-          ? chatHistoryRef.current.slice(
-              0,
-              messageIndex === -1 ? undefined : messageIndex,
-            )
-          : chatHistoryRef.current,
-        chatModel: {
-          key: chatModelProvider.key,
-          providerId: chatModelProvider.providerId,
-        },
-        embeddingModel: {
-          key: embeddingModelProvider.key,
-          providerId: embeddingModelProvider.providerId,
-        },
-        systemInstructions,
-      }),
-    });
+          message: {
+            messageId: messageId,
+            chatId: chatId!,
+            content: message,
+          },
+          chatId: chatId!,
+          files: fileIds,
+          focusMode: focusMode,
+          optimizationMode: optimizationMode,
+          history: rewrite
+            ? chatHistoryRef.current.slice(
+                0,
+                messageIndex === -1 ? undefined : messageIndex,
+              )
+            : chatHistoryRef.current,
+          chatModel: {
+            key: chatModelProvider.key,
+            providerId: chatModelProvider.providerId,
+          },
+          embeddingModel: {
+            key: embeddingModelProvider.key,
+            providerId: embeddingModelProvider.providerId,
+          },
+          systemInstructions,
+        }),
+      });
 
-    if (!res.body) throw new Error('No response body');
-
-    const reader = res.body?.getReader();
-    const decoder = new TextDecoder('utf-8');
-
-    let partialChunk = '';
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) {
-        partialChunk += decoder.decode();
-        break;
+      if (!res.ok) {
+        const errorBody = await res.text().catch(() => '');
+        const parsedError =
+          parseLooseJson<{ message?: string }>(errorBody)?.message || '';
+        throw new Error(
+          parsedError || `请求失败（${res.status} ${res.statusText}）`,
+        );
       }
 
-      partialChunk += decoder.decode(value, { stream: true });
+      if (!res.body) throw new Error('No response body');
 
-      let lineBreakIndex = partialChunk.indexOf('\n');
-      while (lineBreakIndex !== -1) {
-        const raw = partialChunk.slice(0, lineBreakIndex).trim();
-        partialChunk = partialChunk.slice(lineBreakIndex + 1);
+      const contentType = (res.headers.get('content-type') || '').toLowerCase();
+      if (!contentType.includes('text/event-stream')) {
+        const text = await res.text().catch(() => '');
+        const json = parseLooseJson<Record<string, any>>(text);
+        if (json?.message) {
+          throw new Error(String(json.message));
+        }
+        throw new Error('服务端返回了非流式响应');
+      }
 
-        if (raw) {
-          const json = parseLooseJson<Record<string, any>>(raw);
-          if (json) {
-            await messageHandler(json);
-          } else {
-            console.warn('Failed to parse stream line:', raw.slice(0, 120));
-          }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+
+      let partialChunk = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          partialChunk += decoder.decode();
+          break;
         }
 
-        lineBreakIndex = partialChunk.indexOf('\n');
-      }
-    }
+        partialChunk += decoder.decode(value, { stream: true });
 
-    const tail = partialChunk.trim();
-    if (tail) {
-      const json = parseLooseJson<Record<string, any>>(tail);
-      if (json) {
-        await messageHandler(json);
-      } else {
-        console.warn('Dropping non-json stream tail');
+        let lineBreakIndex = partialChunk.indexOf('\n');
+        while (lineBreakIndex !== -1) {
+          const raw = partialChunk.slice(0, lineBreakIndex).trim();
+          partialChunk = partialChunk.slice(lineBreakIndex + 1);
+
+          if (raw) {
+            const json = parseLooseJson<Record<string, any>>(raw);
+            if (json) {
+              await messageHandler(json);
+            } else {
+              console.warn('Failed to parse stream line:', raw.slice(0, 120));
+            }
+          }
+
+          lineBreakIndex = partialChunk.indexOf('\n');
+        }
       }
+
+      const tail = partialChunk.trim();
+      if (tail) {
+        const json = parseLooseJson<Record<string, any>>(tail);
+        if (json) {
+          await messageHandler(json);
+        } else {
+          console.warn('Dropping non-json stream tail');
+        }
+      }
+
+      // 防止流异常中断导致 messageEnd 丢失，UI 长时间卡在 loading。
+      if (!streamCompleted) {
+        setLoading(false);
+        setLoadingStatus('');
+        if (!recievedMessage.trim()) {
+          toast.error('响应中断，请重试。');
+        }
+      }
+    } catch (err: any) {
+      console.error('sendMessage failed:', err);
+      setLoading(false);
+      setLoadingStatus('');
+      toast.error(err?.message || '发送失败，请稍后重试。');
     }
   };
 
@@ -857,6 +994,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         isMessagesLoaded,
         isReady,
         loading,
+        loadingStatus,
         messageAppeared,
         notFound,
         optimizationMode,

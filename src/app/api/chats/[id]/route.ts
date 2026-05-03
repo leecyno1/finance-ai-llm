@@ -1,6 +1,6 @@
 import db from '@/lib/db';
 import { chats, messages } from '@/lib/db/schema';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { getClientIdFromHeaders } from '@/lib/server/client';
 
 export const runtime = 'nodejs';
@@ -24,6 +24,7 @@ export const GET = async (
 
     const chatMessages = await db.query.messages.findMany({
       where: and(eq(messages.chatId, id), eq(messages.owner, owner)),
+      orderBy: asc(messages.id),
     });
 
     return Response.json(

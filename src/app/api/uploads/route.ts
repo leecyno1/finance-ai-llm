@@ -46,15 +46,19 @@ export async function POST(req: Request) {
 
     const processedFiles: FileRes[] = [];
 
+    for (const file of files) {
+      const fileExtension = file.name.split('.').pop()?.toLowerCase();
+      if (!fileExtension || !['pdf', 'docx', 'txt'].includes(fileExtension)) {
+        return NextResponse.json(
+          { message: 'File type not supported' },
+          { status: 400 },
+        );
+      }
+    }
+
     await Promise.all(
       files.map(async (file: any) => {
-        const fileExtension = file.name.split('.').pop();
-        if (!['pdf', 'docx', 'txt'].includes(fileExtension!)) {
-          return NextResponse.json(
-            { message: 'File type not supported' },
-            { status: 400 },
-          );
-        }
+        const fileExtension = file.name.split('.').pop()?.toLowerCase()!;
 
         const uniqueFileName = `${crypto.randomBytes(16).toString('hex')}.${fileExtension}`;
         const filePath = path.join(uploadDir, uniqueFileName);
@@ -115,8 +119,20 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     console.error('Error uploading file:', error);
+    const errorText = `${(error as any)?.message || ''} ${(error as any)?.cause?.message || ''}`;
+    const message =
+      /huggingface\.co|ECONNRESET|fetch failed/i.test(errorText)
+        ? '上传失败：当前服务无法连接嵌入模型源（huggingface.co），请切换可用 Embedding 模型或检查网络。'
+        : /minimax embedding request failed|minimax embedding response missing vectors|vectors mismatch|login fail|authorization/i.test(
+              errorText,
+            )
+          ? /insufficient balance/i.test(errorText)
+            ? '上传失败：MiniMax Embedding 余额不足，请在 MiniMax 平台充值后重试。'
+            : '上传失败：MiniMax Embedding 调用异常，请检查 MINIMAX_API_KEY、MINIMAX_BASE_URL 与 MINIMAX_EMBEDDING_MODEL。'
+          : 'An error has occurred.';
+
     return NextResponse.json(
-      { message: 'An error has occurred.' },
+      { message },
       { status: 500 },
     );
   }

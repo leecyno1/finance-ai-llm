@@ -1,10 +1,18 @@
 import { AIMessage, BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { MetaSearchAgentType } from '@/lib/search/metaSearchAgent';
-import { searchHandlers } from '@/lib/search';
+import {
+  getSearchHandlerCapabilities,
+  searchHandlers,
+} from '@/lib/search';
+import ApiSearchAgent from '@/lib/search/apiSearchAgent';
 import ModelRegistry from '@/lib/models/registry';
+import { loadRoutedChatModel, loadRoutedEmbeddingModel } from '@/lib/models/modelRouting';
 import { ModelWithProvider } from '@/lib/models/types';
 import { parseLooseJson } from '@/lib/utils/json';
 import { sanitizeLlmOutput } from '@/lib/utils/llmOutput';
+import { getOpenbbMcpEnabled } from '@/lib/config/serverRegistry';
+import { openbbFinanceSkillPrompt } from '@/lib/openbb/skill';
+type OutputLanguage = 'zh' | 'en';
 
 const detectSummaryQuery = (query: string) =>
   /^\s*summary\s*:/i.test(query) ||
@@ -21,10 +29,29 @@ const trimToFirstHeading = (text: string) => {
   return (idx === 0 ? text : text.slice(idx + 1)).trim();
 };
 
-const ensureSummaryHeading = (text: string) => {
+const ensureSummaryHeading = (text: string, lang: OutputLanguage) => {
   const trimmed = text.trimStart();
   if (!trimmed) return '';
+  if (lang === 'en') {
+    return trimmed.startsWith('## Summary')
+      ? trimmed
+      : `## Summary\n\n${trimmed}`;
+  }
   return trimmed.startsWith('## 摘要') ? trimmed : `## 摘要\n\n${trimmed}`;
+};
+
+const detectOutputLanguage = (
+  systemInstructions?: string | null,
+): OutputLanguage => {
+  const text = String(systemInstructions || '').toLowerCase();
+  if (
+    /respond in english|use english|answer in english|default to english|please respond in english/.test(
+      text,
+    )
+  ) {
+    return 'en';
+  }
+  return 'zh';
 };
 
 interface ChatRequestBody {
@@ -37,6 +64,11 @@ interface ChatRequestBody {
   stream?: boolean;
   systemInstructions?: string;
 }
+
+type SearchRouteModels = {
+  llm: Awaited<ReturnType<ModelRegistry['loadChatModel']>> | null;
+  embeddings: Awaited<ReturnType<ModelRegistry['loadEmbeddingModel']>> | null;
+};
 
 const safeParseEmitterData = (raw: unknown) => {
   const parsed = parseLooseJson<{ type?: string; data?: any }>(raw);
@@ -51,7 +83,9 @@ const safeParseEmitterData = (raw: unknown) => {
 
 const buildEffectiveSystemInstructions = (
   query: string,
+  optimizationMode: 'speed' | 'balanced',
   systemInstructions?: string | null,
+  outputLanguage: OutputLanguage = 'zh',
 ) => {
   const isSummaryQuery = /^\s*summary\s*:/i.test(query) ||
     (/https?:\/\//i.test(query) && /summary|summar|摘要|总结/i.test(query));
@@ -60,15 +94,24 @@ const buildEffectiveSystemInstructions = (
   const extras: string[] = [];
 
   if (isSummaryQuery) {
-    extras.push(
-      '你正在执行新闻URL摘要任务。只输出最终摘要，不要输出过程性描述、能力限制说明或自我对话。默认使用中文，并按以下结构：## 摘要\n## 核心要点\n## 可能影响。',
-    );
+    if (outputLanguage === 'en') {
+      extras.push(
+        'You are handling a URL summary task. Output final summary only, no process narration, disclaimers, or self-talk. Use this structure: ## Summary\n## Key Points\n## Potential Impact.',
+      );
+    } else {
+      extras.push(
+        '你正在执行新闻URL摘要任务。只输出最终摘要，不要输出过程性描述、能力限制说明或自我对话。按以下结构：## 摘要\n## 核心要点\n## 可能影响。',
+      );
+    }
   }
 
   if (!isSummaryQuery && isFinanceQuery) {
     extras.push(
       '金融内容合规要求：仅做信息整理与研究框架/情景分析，不提供个性化投资建议；避免明确“买入/卖出/强烈推荐”等措辞；用数据与逻辑说明观点，并给出主要风险点与不确定性。',
     );
+    if (optimizationMode !== 'speed' && getOpenbbMcpEnabled()) {
+      extras.push(openbbFinanceSkillPrompt);
+    }
   }
 
   return [systemInstructions || '', ...extras].filter(Boolean).join('\n');
@@ -78,6 +121,7 @@ export const POST = async (req: Request) => {
   try {
     const body: ChatRequestBody = await req.json();
     const summaryMode = detectSummaryQuery(body.query || '');
+    const outputLanguage = detectOutputLanguage(body.systemInstructions || '');
 
     if (!body.focusMode || !body.query) {
       return Response.json(
@@ -98,35 +142,52 @@ export const POST = async (req: Request) => {
     });
 
     const registry = new ModelRegistry();
-
-    const [llm, embeddings] = await Promise.all([
-      registry.loadChatModel(body.chatModel.providerId, body.chatModel.key),
-      registry.loadEmbeddingModel(
-        body.embeddingModel.providerId,
-        body.embeddingModel.key,
-      ),
-    ]);
-
     const searchHandler: MetaSearchAgentType = searchHandlers[body.focusMode];
 
     if (!searchHandler) {
       return Response.json({ message: 'Invalid focus mode' }, { status: 400 });
     }
 
+    const handlerCapabilities = getSearchHandlerCapabilities(body.focusMode);
+    let models: SearchRouteModels = {
+      llm: null,
+      embeddings: null,
+    };
+
+    if (handlerCapabilities.requiresModels) {
+      const [llm, embeddings] = await Promise.all([
+        loadRoutedChatModel(
+          registry,
+          body.focusMode,
+          body.optimizationMode,
+          body.chatModel,
+        ),
+        loadRoutedEmbeddingModel(registry, body.embeddingModel),
+      ]);
+      models = { llm, embeddings };
+    }
+
     const effectiveSystemInstructions = buildEffectiveSystemInstructions(
       body.query,
+      body.optimizationMode,
       body.systemInstructions || '',
+      outputLanguage,
     );
 
-    const emitter = await searchHandler.searchAndAnswer(
-      body.query,
+    const emitter = await new ApiSearchAgent(
+      body.focusMode,
+      searchHandler,
+    ).searchAndAnswer({
+      focusMode: body.focusMode,
+      message: body.query,
       history,
-      llm,
-      embeddings,
-      body.optimizationMode,
-      [],
-      effectiveSystemInstructions,
-    );
+      handler: searchHandler,
+      llm: models.llm,
+      embeddings: models.embeddings,
+      optimizationMode: body.optimizationMode,
+      fileIds: [],
+      systemInstructions: effectiveSystemInstructions,
+    });
 
     if (!body.stream) {
       return new Promise(
@@ -136,6 +197,8 @@ export const POST = async (req: Request) => {
         ) => {
           let rawMessage = '';
           let sources: any[] = [];
+          let searchResults: any[] = [];
+          let researchComplete = false;
 
           emitter.on('data', (data: string) => {
             const parsedData = safeParseEmitterData(data);
@@ -145,13 +208,29 @@ export const POST = async (req: Request) => {
               rawMessage += String(parsedData.data ?? '');
             } else if (parsedData.type === 'sources') {
               sources = parsedData.data ?? [];
+            } else if (parsedData.type === 'searchResults') {
+              searchResults = parsedData.data ?? [];
+            } else if (parsedData.type === 'researchComplete') {
+              researchComplete = true;
+            } else if (parsedData.type === 'status') {
+              // ignore status in non-stream mode
             }
           });
 
           emitter.on('end', () => {
             let message = sanitizeLlmOutput(rawMessage);
-            if (summaryMode) message = ensureSummaryHeading(trimToFirstHeading(message));
-            resolve(Response.json({ message, sources }, { status: 200 }));
+            if (summaryMode) {
+              message = ensureSummaryHeading(
+                trimToFirstHeading(message),
+                outputLanguage,
+              );
+            }
+            resolve(
+              Response.json(
+                { message, sources, searchResults, researchComplete },
+                { status: 200 },
+              ),
+            );
           });
 
           emitter.on('error', (error: any) => {
@@ -178,7 +257,8 @@ export const POST = async (req: Request) => {
         let emittedMessage = '';
         let summaryTrimOffset: number | null = null;
         let summaryPrefixed = false;
-        const summaryPrefix = '## 摘要\n\n';
+        const summaryPrefix =
+          outputLanguage === 'en' ? '## Summary\n\n' : '## 摘要\n\n';
 
         controller.enqueue(
           encoder.encode(
@@ -215,7 +295,10 @@ export const POST = async (req: Request) => {
                 summaryTrimOffset = idx === 0 ? 0 : idx + 1;
               }
               effective = effective.slice(summaryTrimOffset);
-              if (!summaryPrefixed && !effective.trimStart().startsWith('## 摘要')) {
+              const hasHeading = effective
+                .trimStart()
+                .startsWith(outputLanguage === 'en' ? '## Summary' : '## 摘要');
+              if (!summaryPrefixed && !hasHeading) {
                 effective = summaryPrefix + effective.trimStart();
                 summaryPrefixed = true;
               }
@@ -243,6 +326,32 @@ export const POST = async (req: Request) => {
                 }) + '\n',
               ),
             );
+          } else if (parsedData.type === 'searchResults') {
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'searchResults',
+                  data: parsedData.data ?? [],
+                }) + '\n',
+              ),
+            );
+          } else if (parsedData.type === 'researchComplete') {
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'researchComplete',
+                }) + '\n',
+              ),
+            );
+          } else if (parsedData.type === 'status') {
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: 'status',
+                  data: String(parsedData.data ?? ''),
+                }) + '\n',
+              ),
+            );
           }
         });
 
@@ -258,7 +367,10 @@ export const POST = async (req: Request) => {
               summaryTrimOffset = idx === -1 ? 0 : idx === 0 ? 0 : idx + 1;
             }
             effective = effective.slice(summaryTrimOffset);
-            if (!summaryPrefixed && !effective.trimStart().startsWith('## 摘要')) {
+            const hasHeading = effective
+              .trimStart()
+              .startsWith(outputLanguage === 'en' ? '## Summary' : '## 摘要');
+            if (!summaryPrefixed && !hasHeading) {
               effective = summaryPrefix + effective.trimStart();
               summaryPrefixed = true;
             }

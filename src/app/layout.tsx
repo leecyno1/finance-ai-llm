@@ -17,8 +17,8 @@ const montserrat = Montserrat({
 });
 
 export const metadata: Metadata = {
-  title: 'Dr.Lemon · AI金融研究',
-  description: 'Dr.Lemon 是面向金融投研的 AI 助手：支持联网检索、财经快讯与宏观数据。',
+  title: '大圣之怒 · AI金融研究',
+  description: '大圣之怒 是面向金融投研的 AI 助手：支持联网检索、财经快讯与宏观数据。',
 };
 
 export default function RootLayout({

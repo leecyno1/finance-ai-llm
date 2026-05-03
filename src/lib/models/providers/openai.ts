@@ -158,11 +158,12 @@ class OpenAIProvider extends BaseModelProvider<OpenAIConfig> {
 
     return new ChatOpenAI({
       apiKey: this.config.apiKey,
-      temperature: 0.7,
+      temperature: 0.2,
       model: key,
       // Avoid hanging requests (some OpenAI-compatible providers can stall).
       timeout: 30000,
       maxRetries: 1,
+      streamUsage: false,
       configuration: {
         baseURL: this.config.baseURL,
       },

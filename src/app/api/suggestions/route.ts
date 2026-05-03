@@ -1,5 +1,6 @@
 import generateSuggestions from '@/lib/chains/suggestionGeneratorAgent';
 import ModelRegistry from '@/lib/models/registry';
+import { loadRoutedChatModel } from '@/lib/models/modelRouting';
 import { ModelWithProvider } from '@/lib/models/types';
 import { toBaseMessages } from '@/lib/utils/chatHistory';
 
@@ -16,9 +17,11 @@ export const POST = async (req: Request) => {
 
     const registry = new ModelRegistry();
 
-    const llm = await registry.loadChatModel(
-      body.chatModel.providerId,
-      body.chatModel.key,
+    const llm = await loadRoutedChatModel(
+      registry,
+      'writingAssistant',
+      'balanced',
+      body.chatModel,
     );
 
     const suggestions = await generateSuggestions(

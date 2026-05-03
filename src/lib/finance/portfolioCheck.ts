@@ -24,8 +24,24 @@ export type PortfolioCheckResult = {
   exposure: PortfolioExposure;
   topFactorSensitivities: Array<{ factor: string; value: number; interpretation: string }>;
   rebalanceSuggestions: string[];
+  fundActionRecommendations?: Array<{
+    action: string;
+    target: string;
+    funds: Array<{
+      tsCode: string;
+      name: string;
+      category: string;
+      style: string;
+      riskLevel: string;
+      matchScore: number;
+      reason: string;
+      riskPrompt: string;
+    }>;
+  }>;
   riskScore: number;
 };
+
+export type { HoldingProfile };
 
 const KNOWN_PROFILES: Record<string, HoldingProfile> = {
   AAPL: {
@@ -254,6 +270,31 @@ const interpretFactor = (factor: string, value: number) => {
   return `${strength}${direction}`;
 };
 
+const buildSectorActionHint = (sector: string) => {
+  if (/白酒|食品饮料|消费|家电|零售/.test(sector)) {
+    return '可把减仓资金分流至沪深300/红利低波或中短债，降低单一消费景气依赖。';
+  }
+  if (/银行|保险|证券|金融/.test(sector)) {
+    return '可用红利低波或沪深300替代部分金融仓位，避免净息差和信用周期单点暴露。';
+  }
+  if (/半导体|科技|科创50|创业板/.test(sector)) {
+    return '可用沪深300/红利低波或债券仓位对冲成长风格回撤。';
+  }
+  if (/新能源|光伏|锂电|储能/.test(sector)) {
+    return '可降低赛道基金权重，转向宽基或现金管理等待盈利验证。';
+  }
+  if (/沪深300|上证50|中证500|中证1000|宽基/.test(sector)) {
+    return '若宽基过重，可用债券、黄金或红利低波做波动缓冲。';
+  }
+  if (/债券|货币/.test(sector)) {
+    return '若低风险资产过重，可逐步补充宽基权益仓位提升长期收益弹性。';
+  }
+  if (/贵金属|商品|资源/.test(sector)) {
+    return '可控制商品仓位上限，并用宽基权益或债券平滑周期波动。';
+  }
+  return '建议用宽基、债券或现金管理分散该单一行业暴露。';
+};
+
 const buildRebalanceSuggestions = (result: PortfolioCheckResult) => {
   const suggestions: string[] = [];
   const assetClass = result.exposure.byAssetClass;
@@ -267,6 +308,7 @@ const buildRebalanceSuggestions = (result: PortfolioCheckResult) => {
 
   const maxRegion = Object.entries(region).sort((a, b) => b[1] - a[1])[0];
   const maxSector = Object.entries(sectors).sort((a, b) => b[1] - a[1])[0];
+  const regions = Object.keys(region);
 
   if (equity > 75 && bond < 15) {
     suggestions.push('股票仓位偏高且债券不足，建议降低权益 5%-10%，增配中短久期利率债。');
@@ -277,11 +319,13 @@ const buildRebalanceSuggestions = (result: PortfolioCheckResult) => {
   if (cash < 3) {
     suggestions.push('现金缓冲较低，建议预留 3%-8% 流动性仓位用于回撤与战术加仓。');
   }
-  if (maxRegion && maxRegion[1] > 60) {
+  if (maxRegion && maxRegion[1] > 75 && (maxRegion[0] !== 'CN' || regions.length > 1)) {
     suggestions.push(`区域集中在 ${maxRegion[0]}（${maxRegion[1].toFixed(1)}%），建议做跨区域分散。`);
   }
   if (maxSector && maxSector[1] > 35) {
-    suggestions.push(`行业集中在 ${maxSector[0]}（${maxSector[1].toFixed(1)}%），建议降至 25%-30% 以下。`);
+    suggestions.push(
+      `行业集中在 ${maxSector[0]}（${maxSector[1].toFixed(1)}%），建议降至 25%-30% 以下。${buildSectorActionHint(maxSector[0])}`,
+    );
   }
 
   const beta = result.exposure.factorExposure.beta || 0;
@@ -305,23 +349,12 @@ const buildRebalanceSuggestions = (result: PortfolioCheckResult) => {
   return suggestions.slice(0, 6);
 };
 
-export const runPortfolioCheck = (input: string): PortfolioCheckResult | null => {
-  const holdings = parsePortfolioInput(input);
-  if (!holdings.length) return null;
+export const getHoldingProfile = (symbol: string): HoldingProfile =>
+  KNOWN_PROFILES[symbol] || DEFAULT_PROFILE(symbol);
 
-  const totalWeight = holdings.reduce((acc, cur) => acc + cur.weight, 0);
-  if (!Number.isFinite(totalWeight) || totalWeight <= 0) return null;
-
-  const rows = holdings.map((h) => {
-    const profile = KNOWN_PROFILES[h.symbol] || DEFAULT_PROFILE(h.symbol);
-    const normalizedWeight = (h.weight / totalWeight) * 100;
-    return {
-      ...h,
-      normalizedWeight: Number(normalizedWeight.toFixed(2)),
-      profile,
-    };
-  });
-
+export const buildPortfolioCheckResult = (
+  rows: Array<HoldingInput & { normalizedWeight: number; profile: HoldingProfile }>,
+): PortfolioCheckResult => {
   const factorExposure = computeFactorExposure(rows);
 
   const topFactorSensitivities = Object.entries(factorExposure)
@@ -356,6 +389,26 @@ export const runPortfolioCheck = (input: string): PortfolioCheckResult | null =>
 
   result.rebalanceSuggestions = buildRebalanceSuggestions(result);
   return result;
+};
+
+export const runPortfolioCheck = (input: string): PortfolioCheckResult | null => {
+  const holdings = parsePortfolioInput(input);
+  if (!holdings.length) return null;
+
+  const totalWeight = holdings.reduce((acc, cur) => acc + cur.weight, 0);
+  if (!Number.isFinite(totalWeight) || totalWeight <= 0) return null;
+
+  const rows = holdings.map((h) => {
+    const profile = getHoldingProfile(h.symbol);
+    const normalizedWeight = (h.weight / totalWeight) * 100;
+    return {
+      ...h,
+      normalizedWeight: Number(normalizedWeight.toFixed(2)),
+      profile,
+    };
+  });
+
+  return buildPortfolioCheckResult(rows);
 };
 
 const toRows = (map: Record<string, number>) =>
