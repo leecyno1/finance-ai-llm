@@ -30,6 +30,7 @@ import { MinimalProvider } from '../models/types';
 import { getAutoMediaSearch, getLanguage } from '../config/clientRegistry';
 import { parseLooseJson } from '../utils/json';
 import { sanitizeLlmOutput } from '../utils/llmOutput';
+import { shouldBypassWebSearch } from '../search/intent';
 
 export type Section = {
   userMessage: UserMessage;
@@ -660,8 +661,14 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
 
+    const bypassWebSearch = shouldBypassWebSearch({
+      focusMode,
+      query: message,
+      fileIds,
+    });
+
     setLoading(true);
-    setLoadingStatus('正在检索网页信息...');
+    setLoadingStatus(bypassWebSearch ? '正在生成回答...' : '正在检索网页信息...');
     setMessageAppeared(false);
 
     // 首次发起对话时，从首页导航到对话页 `/c/[chatId]`，

@@ -14,6 +14,7 @@ import { ModelWithProvider } from '@/lib/models/types';
 import { getClientIdFromHeaders } from '@/lib/server/client';
 import { parseLooseJson } from '@/lib/utils/json';
 import { sanitizeLlmOutput } from '@/lib/utils/llmOutput';
+import { shouldBypassWebSearch } from '@/lib/search/intent';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -473,7 +474,15 @@ export const POST = async (req: Request) => {
       }
     });
 
-    const handler = searchHandlers[body.focusMode];
+    const effectiveFocusMode = shouldBypassWebSearch({
+      focusMode: body.focusMode,
+      query: message.content,
+      fileIds: body.files,
+    })
+      ? 'writingAssistant'
+      : body.focusMode;
+
+    const handler = searchHandlers[effectiveFocusMode];
 
     if (!handler) {
       return Response.json(
@@ -484,7 +493,7 @@ export const POST = async (req: Request) => {
       );
     }
 
-    const handlerCapabilities = getSearchHandlerCapabilities(body.focusMode);
+    const handlerCapabilities = getSearchHandlerCapabilities(effectiveFocusMode);
     const registry = new ModelRegistry();
     let llm: Awaited<ReturnType<ModelRegistry['loadChatModel']>> | null = null;
     let embedding:
@@ -495,7 +504,7 @@ export const POST = async (req: Request) => {
       [llm, embedding] = await Promise.all([
         loadRoutedChatModel(
           registry,
-          body.focusMode,
+          effectiveFocusMode,
           body.optimizationMode,
           body.chatModel,
         ),
@@ -509,10 +518,10 @@ export const POST = async (req: Request) => {
     );
 
     const stream = await new ApiSearchAgent(
-      body.focusMode,
+      effectiveFocusMode,
       handler,
     ).searchAndAnswer({
-      focusMode: body.focusMode,
+      focusMode: effectiveFocusMode,
       message: message.content,
       history,
       handler,
@@ -534,7 +543,7 @@ export const POST = async (req: Request) => {
       message.chatId,
       owner,
       detectSummaryQuery(message.content),
-      body.focusMode,
+      effectiveFocusMode,
     );
     handleHistorySave(message, humanMessageId, body.focusMode, body.files, owner);
 
