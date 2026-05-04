@@ -893,6 +893,7 @@ class MetaSearchAgent implements MetaSearchAgentType {
         if (ended) continue;
 
         if (
+          this.config.searchWeb &&
           event.event === 'on_chain_start' &&
           event.name === 'FinalSourceRetriever'
         ) {
@@ -900,6 +901,7 @@ class MetaSearchAgent implements MetaSearchAgentType {
         }
 
         if (
+          this.config.searchWeb &&
           event.event === 'on_chain_end' &&
           event.name === 'FinalSourceRetriever'
         ) {
