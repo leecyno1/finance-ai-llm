@@ -11,6 +11,14 @@ interface OpenAIConfig {
   baseURL: string;
 }
 
+const getChatTimeoutMs = () =>
+  Number(process.env.CHAT_MODEL_TIMEOUT_MS || process.env.OPENAI_CHAT_TIMEOUT_MS || 120000);
+
+const getChatMaxTokens = () => {
+  const value = Number(process.env.CHAT_MODEL_MAX_TOKENS || process.env.OPENAI_CHAT_MAX_TOKENS || 12000);
+  return Number.isFinite(value) && value > 0 ? value : 12000;
+};
+
 const defaultChatModels: Model[] = [
   {
     name: 'GPT-3.5 Turbo',
@@ -160,8 +168,9 @@ class OpenAIProvider extends BaseModelProvider<OpenAIConfig> {
       apiKey: this.config.apiKey,
       temperature: 0.2,
       model: key,
-      // Avoid hanging requests (some OpenAI-compatible providers can stall).
-      timeout: 30000,
+      maxTokens: getChatMaxTokens(),
+      // Long research reports need enough time to stream complete answers.
+      timeout: getChatTimeoutMs(),
       maxRetries: 1,
       streamUsage: false,
       configuration: {

@@ -34,6 +34,18 @@ const ThinkTagProcessor = ({
   );
 };
 
+const formatResearchStatus = (content: string, active: boolean) => {
+  if (active) return content;
+
+  return content
+    .replace(/^正在检索网页来源/, '已完成网页来源检索')
+    .replace(/^已获取来源，正在组织回答/, '已获取来源，已完成回答组织')
+    .replace(/^正在整合来源并生成回答/, '已完成来源整合')
+    .replace(/^正在生成回答/, '已完成回答生成')
+    .replace(/^正在处理中/, '已完成处理')
+    .replace(/^正在/, '已完成');
+};
+
 const MessageBox = ({
   section,
   sectionIndex,
@@ -50,6 +62,13 @@ const MessageBox = ({
   const parsedMessage = section.parsedAssistantMessage || '';
   const speechMessage = section.speechMessage || '';
   const thinkingEnded = section.thinkingEnded;
+  const researchStatusActive = isLast && loading;
+  const visibleStatusMessages = section.statusMessages
+    .filter((status) => status.content !== '研究过程已完成')
+    .map((status) => ({
+      ...status,
+      content: formatResearchStatus(status.content, researchStatusActive),
+    }));
 
   const { speechStatus, start, stop } = useSpeech({ text: speechMessage });
 
@@ -106,13 +125,18 @@ const MessageBox = ({
           {section.statusMessages.length > 0 && (
             <div className="rounded-2xl border border-rose-400/20 dark:border-blue-400/20 bg-white/70 dark:bg-white/5 px-4 py-3">
               <div className="flex items-center gap-2">
-                <span className="inline-block h-2 w-2 rounded-full bg-rose-500 dark:bg-blue-400" />
+                <span
+                  className={cn(
+                    'inline-block h-2 w-2 rounded-full bg-rose-500 dark:bg-blue-400',
+                    researchStatusActive ? 'animate-pulse' : 'opacity-60',
+                  )}
+                />
                 <h3 className="text-sm font-semibold text-black dark:text-white">
-                  研究过程
+                  {researchStatusActive ? '研究过程' : '研究过程已完成'}
                 </h3>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                {section.statusMessages.map((status) => (
+                {visibleStatusMessages.map((status) => (
                   <span
                     key={status.messageId}
                     className="rounded-full border border-rose-400/25 dark:border-blue-400/25 bg-rose-500/8 dark:bg-blue-500/10 px-3 py-1 text-xs leading-5 text-black/75 dark:text-white/75"

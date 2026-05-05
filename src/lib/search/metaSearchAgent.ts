@@ -87,7 +87,7 @@ const MAX_FINANCE_MARKET_ROWS = 24;
 const MAX_FINANCE_MACRO_ROWS = 36;
 const MAX_FINANCE_NEWS_ROWS = 20;
 const MAX_OPENBB_DOCS = 2;
-const STREAM_GUARD_TIMEOUT_MS = 45000;
+const STREAM_GUARD_TIMEOUT_MS = 120000;
 
 const FINANCE_QUERY_RE =
   /股票|个股|A股|港股|美股|欧股|日股|投资|投研|估值|目标价|买入|卖出|持仓|收益率|回撤|资产配置|组合|基金|期货|外汇|利率|债券|宏观|CPI|PPI|PMI|GDP|非农|社融|信贷|财政|国债|美债|reits|commodit|bond|yield|equity|fx|macro|earnings|valuation/i;

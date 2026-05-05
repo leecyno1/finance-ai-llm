@@ -11,6 +11,14 @@ interface MiniMaxConfig {
   baseURL: string;
 }
 
+const getChatTimeoutMs = () =>
+  Number(process.env.CHAT_MODEL_TIMEOUT_MS || process.env.MINIMAX_CHAT_TIMEOUT_MS || 120000);
+
+const getChatMaxTokens = () => {
+  const value = Number(process.env.CHAT_MODEL_MAX_TOKENS || process.env.MINIMAX_CHAT_MAX_TOKENS || 12000);
+  return Number.isFinite(value) && value > 0 ? value : 12000;
+};
+
 const defaultChatModels: Model[] = [
   {
     name: 'MiniMax M2.7',
@@ -270,7 +278,8 @@ class MiniMaxProvider extends BaseModelProvider<MiniMaxConfig> {
       apiKey: this.config.apiKey,
       temperature: 0.2,
       model: key,
-      timeout: 30000,
+      maxTokens: getChatMaxTokens(),
+      timeout: getChatTimeoutMs(),
       maxRetries: 1,
       streamUsage: false,
       configuration: {

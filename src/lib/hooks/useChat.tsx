@@ -30,7 +30,7 @@ import { MinimalProvider } from '../models/types';
 import { getAutoMediaSearch, getLanguage } from '../config/clientRegistry';
 import { parseLooseJson } from '../utils/json';
 import { sanitizeLlmOutput } from '../utils/llmOutput';
-import { shouldBypassWebSearch } from '../search/intent';
+import { isImageGenerationQuery, shouldShowWebSearchStatus } from '../search/intent';
 
 export type Section = {
   userMessage: UserMessage;
@@ -661,14 +661,23 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
 
-    const bypassWebSearch = shouldBypassWebSearch({
+    const isMiniMaxImageGeneration =
+      focusMode === 'minimaxMedia' && isImageGenerationQuery(message);
+
+    const showWebSearchStatus = shouldShowWebSearchStatus({
       focusMode,
       query: message,
       fileIds,
     });
 
     setLoading(true);
-    setLoadingStatus(bypassWebSearch ? '正在生成回答...' : '正在检索网页信息...');
+    setLoadingStatus(
+      isMiniMaxImageGeneration
+        ? '正在调用 MiniMax 生成图片...'
+        : showWebSearchStatus
+          ? '正在检索网页信息...'
+          : '正在生成回答...',
+    );
     setMessageAppeared(false);
 
     // 首次发起对话时，从首页导航到对话页 `/c/[chatId]`，
@@ -711,6 +720,99 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       },
     ]);
 
+    if (isMiniMaxImageGeneration) {
+      const aiMessageId = crypto.randomBytes(7).toString('hex');
+
+      try {
+        setMessages((prevMessages) => [
+          ...prevMessages,
+          {
+            messageId: `${aiMessageId}-status`,
+            chatId: chatId!,
+            role: 'status',
+            content: '正在调用 MiniMax 生成图片...',
+            createdAt: new Date(),
+          },
+        ]);
+
+        const res = await fetch('/api/minimax/image-generation', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prompt: message,
+            aspectRatio: '1:1',
+            chatId: chatId!,
+            messageId,
+            focusMode,
+          }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.message || `图片生成失败（${res.status}）`);
+        }
+
+        const images = Array.isArray(data?.images) ? data.images : [];
+        const content =
+          typeof data?.content === 'string' && data.content.trim()
+            ? data.content
+            : images.length
+              ? [
+                  '已为你生成图片：',
+                  '',
+                  ...images.flatMap((url: string, index: number) => [
+                    `![生成图片 ${index + 1}](${url})`,
+                    '',
+                  ]),
+                  `[打开原图](${images[0]})`,
+                ].join('\n')
+              : data?.text || '图片生成已完成，但服务未返回可展示的图片链接。';
+
+        setMessages((prevMessages) => [
+          ...prevMessages,
+          {
+            content,
+            messageId: aiMessageId,
+            chatId: chatId!,
+            role: 'assistant',
+            createdAt: new Date(),
+          },
+        ]);
+
+        setChatHistory((prevHistory) => {
+          const nextHistory: [string, string][] = [
+            ...prevHistory,
+            ['human', message],
+            ['assistant', content],
+          ];
+          chatHistoryRef.current = nextHistory;
+          return nextHistory;
+        });
+
+        setMessageAppeared(true);
+      } catch (err: any) {
+        const errorMessage = err?.message || '图片生成失败，请稍后重试。';
+        toast.error(errorMessage);
+        setMessages((prevMessages) => [
+          ...prevMessages,
+          {
+            content: `图片生成失败：${errorMessage}`,
+            messageId: aiMessageId,
+            chatId: chatId!,
+            role: 'assistant',
+            createdAt: new Date(),
+          },
+        ]);
+      } finally {
+        setLoading(false);
+        setLoadingStatus('');
+      }
+
+      return;
+    }
+
     const messageHandler = async (data: any) => {
       if (data.type === 'error') {
         toast.error(data.data);
@@ -748,6 +850,15 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
             ];
           });
         }
+      }
+
+      if (data.type === 'statusComplete') {
+        const text = String(data.data ?? '研究过程已完成').trim();
+        if (text) setLoadingStatus(text);
+      }
+
+      if (data.type === 'meta') {
+        return;
       }
 
       if (data.type === 'sources') {

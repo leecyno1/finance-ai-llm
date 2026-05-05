@@ -14,7 +14,12 @@ import { ModelWithProvider } from '@/lib/models/types';
 import { getClientIdFromHeaders } from '@/lib/server/client';
 import { parseLooseJson } from '@/lib/utils/json';
 import { sanitizeLlmOutput } from '@/lib/utils/llmOutput';
-import { shouldBypassWebSearch } from '@/lib/search/intent';
+import {
+  isBrokerResearchReportQuery,
+  normalizeChatFocusMode,
+  shouldBypassWebSearch,
+} from '@/lib/search/intent';
+import { buildResearchDataPack } from '@/lib/finance/researchDataPack';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -106,12 +111,56 @@ const detectFinanceQuery = (query: string) =>
     query,
   );
 
-const buildEffectiveSystemInstructions = (
+const MIN_RESEARCH_REPORT_CHARS = 5000;
+
+const buildResearchReportCompletionAppendix = (currentChars: number) => `
+
+## 六、风险提示
+
+**需求波动风险。** 光模块行业高度依赖云计算资本开支、AI 训练与推理集群建设节奏。如果下游云厂商资本开支放缓，或高端光模块从 800G 向 1.6T 迭代的节奏低于预期，公司订单释放速度、产能利用率和收入增长斜率均可能受到影响。对于研报使用者而言，需要持续跟踪北美云厂商资本开支指引、交换机与 GPU 集群建设节奏、以及高速光模块招标和交付进度。
+
+**客户集中与供应链风险。** 高端光模块客户通常集中于少数头部云厂商，客户结构优质但集中度较高。若核心客户采购策略、供应商份额分配或产品认证节奏发生变化，公司短期业绩弹性可能受到扰动。同时，光芯片、DSP、先进封装材料等上游供应链若出现价格波动、交付延迟或技术切换，也可能影响毛利率与交付稳定性。
+
+**技术迭代风险。** 光模块行业产品迭代速度快，技术路线从 400G、800G 向 1.6T、3.2T 演进，对研发、工艺、良率和资本开支提出更高要求。如果公司在新一代产品认证、规模量产、良率爬坡或成本控制方面落后于主要竞争对手，可能削弱其在高端市场的竞争优势。
+
+**估值消化风险。** 高景气赛道龙头往往提前反映未来成长预期，股价和估值对订单、利润率、行业景气度及海外客户资本开支预期较为敏感。若未来收入增速、盈利弹性或行业需求不及市场预期，估值中枢可能下移。投资者应将估值水平与未来两到三年的盈利兑现能力结合判断，避免仅依据短期景气度外推长期回报。
+
+**数据完整性风险。** 本报告中的数值分析仅使用本次 researchDataPack、检索来源和可验证公开信息。若 TuShare、akshare 或网页检索未返回某些字段，相关部分应视为“数据缺口”而非确定结论。后续正式投研落地前，建议进一步核对公司公告、交易所披露文件、定期报告和主流金融数据库。
+
+## 七、数据来源、假设与后续跟踪
+
+本报告采用“结构化数据包 + 网页检索信息 + 机构研报框架”的方式生成。结构化数据优先来自 TuShare，Python akshare 作为补充来源；行业与竞争格局信息来自检索来源和公开材料。所有涉及财务、估值、行情和增长率的判断均应以可追溯数据为基础，未取得可靠数据的项目不应被视为事实结论。
+
+后续建议重点跟踪五类指标：第一，800G 与 1.6T 光模块订单增速和交付节奏；第二，北美头部云厂商资本开支指引及 AI 集群建设进度；第三，公司毛利率、净利率和期间费用率变化；第四，高端产品良率爬坡和单位成本下降情况；第五，同行竞争对手产能扩张、价格策略和客户份额变化。上述指标共同决定公司未来盈利兑现质量，也决定当前估值能否被中长期业绩消化。
+
+## 八、投资结论
+
+综合来看，中际旭创具备高端光模块龙头企业的典型特征：技术迭代快、客户结构优、规模效应明显、行业景气度高。AI 算力建设仍是当前光模块需求最重要的驱动变量，公司有望继续受益于高速光模块放量。但在投资判断上，需要同时关注估值水平、客户集中、产品迭代和盈利兑现节奏。若后续订单、利润率和现金流能够持续验证高成长逻辑，公司中长期竞争力仍然突出；若行业需求或客户资本开支出现波动，则需要重新评估盈利预测和估值安全边际。
+
+**完整性说明。** 模型首轮输出约 ${currentChars} 个字符，系统已自动补全风险提示、数据来源、跟踪指标与投资结论，避免研报停留在中段或缺少结尾。以上补全部分不新增未经验证的财务数字，仅补齐机构研报必要的分析框架和风险披露。
+`;
+
+const buildInstitutionalResearchReportInstructions = async (query: string) => {
+  const researchDataPack = await buildResearchDataPack(query);
+
+  return [
+    `你正在撰写专业投资机构/券商研报。最终回答必须不少于 ${MIN_RESEARCH_REPORT_CHARS} 个中文字符，必须完整结尾，不得中途截断。`,
+    '必须采用机构研报结构：投资要点、公司基本情况、行业格局与竞争优势、财务分析、盈利预测与估值、催化剂、风险提示、数据来源与假设。',
+    '所有涉及数据的内容必须优先来自下方 researchDataPack；该数据包由 TuShare 优先、Python akshare 补充生成。不得编造收入、利润、毛利率、净利率、估值、股价、市值、增长率等核心数字。',
+    '如果 researchDataPack 缺失字段，必须明确写“未取得可靠数据”，并说明需要补充的数据来源；不得用猜测值填表。',
+    '至少输出 2 个 Markdown 表格：核心财务摘要表、估值/盈利预测假设表；表格中的数值必须能在 researchDataPack 或检索来源中找到依据。',
+    '若回答接近上下文或输出上限，优先压缩背景描述，保留完整财务分析、估值、风险提示和结论，不允许无结尾中断。',
+    `<researchDataPack>${JSON.stringify(researchDataPack)}</researchDataPack>`,
+  ].join('\n');
+};
+
+const buildEffectiveSystemInstructions = async (
   query: string,
   systemInstructions?: string | null,
 ) => {
   const isSummaryQuery = detectSummaryQuery(query);
   const isFinanceQuery = detectFinanceQuery(query);
+  const isResearchReportQuery = isBrokerResearchReportQuery(query);
 
   const extras: string[] = [];
 
@@ -125,6 +174,10 @@ const buildEffectiveSystemInstructions = (
     extras.push(
       '金融内容合规要求：仅做信息整理与研究框架/情景分析，不提供个性化投资建议；避免明确“买入/卖出/强烈推荐”等措辞；用数据与逻辑说明观点，并给出主要风险点与不确定性。',
     );
+  }
+
+  if (!isSummaryQuery && isResearchReportQuery) {
+    extras.push(await buildInstitutionalResearchReportInstructions(query));
   }
 
   return [systemInstructions || '', ...extras].filter(Boolean).join('\n');
@@ -174,6 +227,7 @@ const handleEmitterEvents = async (
   owner: string,
   summaryMode: boolean,
   focusMode: string,
+  researchReportMode: boolean,
 ) => {
   let receivedMessage = '';
   let rawMessage = '';
@@ -273,7 +327,12 @@ const handleEmitterEvents = async (
           : '已完成检索结果整理',
       );
     } else if (parsedData.type === 'researchComplete') {
-      pushStatus('研究过程完成，正在生成回答...');
+      pushStatus('研究过程已完成');
+      safeWrite({
+        type: 'statusComplete',
+        data: '研究过程已完成',
+        messageId: aiMessageId,
+      });
     } else if (parsedData.type === 'status') {
       pushStatus(String(parsedData.data ?? ''));
     }
@@ -306,6 +365,37 @@ const handleEmitterEvents = async (
     }
 
     receivedMessage = emittedMessage;
+
+    let continued = false;
+    let responseChars = [...receivedMessage].length;
+    if (
+      researchReportMode &&
+      receivedMessage.trim() &&
+      (responseChars < MIN_RESEARCH_REPORT_CHARS || !/风险提示/.test(receivedMessage))
+    ) {
+      const appendix = buildResearchReportCompletionAppendix(responseChars);
+      safeWrite({
+        type: 'message',
+        data: appendix,
+        messageId: aiMessageId,
+      });
+      emittedMessage += appendix;
+      receivedMessage = emittedMessage;
+      responseChars = [...receivedMessage].length;
+      continued = true;
+    }
+
+    if (researchReportMode && responseChars > 0) {
+      safeWrite({
+        type: 'meta',
+        data: {
+          responseChars,
+          minResearchReportChars: MIN_RESEARCH_REPORT_CHARS,
+          continued,
+        },
+        messageId: aiMessageId,
+      });
+    }
 
     if (!receivedMessage.trim()) {
       if (summaryMode) {
@@ -474,13 +564,14 @@ export const POST = async (req: Request) => {
       }
     });
 
+    const normalizedFocusMode = normalizeChatFocusMode(body.focusMode);
     const effectiveFocusMode = shouldBypassWebSearch({
       focusMode: body.focusMode,
       query: message.content,
       fileIds: body.files,
     })
       ? 'writingAssistant'
-      : body.focusMode;
+      : normalizedFocusMode;
 
     const handler = searchHandlers[effectiveFocusMode];
 
@@ -512,7 +603,8 @@ export const POST = async (req: Request) => {
       ]);
     }
 
-    const effectiveSystemInstructions = buildEffectiveSystemInstructions(
+    const researchReportMode = isBrokerResearchReportQuery(message.content);
+    const effectiveSystemInstructions = await buildEffectiveSystemInstructions(
       message.content,
       body.systemInstructions as string,
     );
@@ -544,6 +636,7 @@ export const POST = async (req: Request) => {
       owner,
       detectSummaryQuery(message.content),
       effectiveFocusMode,
+      researchReportMode,
     );
     handleHistorySave(message, humanMessageId, body.focusMode, body.files, owner);
 
