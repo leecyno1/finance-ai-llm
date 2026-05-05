@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils';
 import { ArrowUp } from 'lucide-react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import CopilotToggle from './MessageInputActions/Copilot';
@@ -13,6 +14,7 @@ const MessageInput = () => {
   const [message, setMessage] = useState('');
   const [textareaRows, setTextareaRows] = useState(1);
   const [mode, setMode] = useState<'multi' | 'single'>('single');
+  const composingRef = useRef(false);
 
   useEffect(() => {
     if (textareaRows >= 2 && message && mode === 'single') {
@@ -23,6 +25,30 @@ const MessageInput = () => {
   }, [textareaRows, mode, message]);
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const submitMessage = () => {
+    const trimmed = message.trim();
+    if (!trimmed) return;
+
+    if (trimmed === '8899174') {
+      try {
+        const next =
+          localStorage.getItem('showSettings') === 'true' ? 'false' : 'true';
+        localStorage.setItem('showSettings', next);
+        window.dispatchEvent(new Event('settings-button-revealed'));
+      } catch {}
+      setMessage('');
+      return;
+    }
+
+    sendMessage(message);
+    setMessage('');
+  };
+
+  const isImeComposing = (e: ReactKeyboardEvent<HTMLFormElement>) => {
+    const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean };
+    return composingRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229;
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -49,42 +75,15 @@ const MessageInput = () => {
   return (
     <form
       onSubmit={(e) => {
-        if (loading) return;
         e.preventDefault();
-        const trimmed = message.trim();
-        if (trimmed === '8899174') {
-          try {
-            const next =
-              localStorage.getItem('showSettings') === 'true'
-                ? 'false'
-                : 'true';
-            localStorage.setItem('showSettings', next);
-            window.dispatchEvent(new Event('settings-button-revealed'));
-          } catch {}
-          setMessage('');
-          return;
-        }
-        sendMessage(message);
-        setMessage('');
+        if (loading || composingRef.current) return;
+        submitMessage();
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && !e.shiftKey && !loading) {
+          if (isImeComposing(e)) return;
           e.preventDefault();
-          const trimmed = message.trim();
-          if (trimmed === '8899174') {
-            try {
-              const next =
-                localStorage.getItem('showSettings') === 'true'
-                  ? 'false'
-                  : 'true';
-              localStorage.setItem('showSettings', next);
-              window.dispatchEvent(new Event('settings-button-revealed'));
-            } catch {}
-            setMessage('');
-            return;
-          }
-          sendMessage(message);
-          setMessage('');
+          submitMessage();
         }
       }}
       className={cn(
@@ -97,6 +96,12 @@ const MessageInput = () => {
         ref={inputRef}
         value={message}
         onChange={(e) => setMessage(e.target.value)}
+        onCompositionStart={() => {
+          composingRef.current = true;
+        }}
+        onCompositionEnd={() => {
+          composingRef.current = false;
+        }}
         onHeightChange={(height, props) => {
           setTextareaRows(Math.ceil(height / props.rowHeight));
         }}
