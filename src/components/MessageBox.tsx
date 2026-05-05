@@ -69,6 +69,7 @@ const MessageBox = ({
       ...status,
       content: formatResearchStatus(status.content, researchStatusActive),
     }));
+  const showResearchStatus = researchStatusActive && visibleStatusMessages.length > 0;
 
   const { speechStatus, start, stop } = useSpeech({ text: speechMessage });
 
@@ -122,7 +123,7 @@ const MessageBox = ({
               </div>
             )}
 
-          {section.statusMessages.length > 0 && (
+          {showResearchStatus && (
             <div className="rounded-2xl border border-rose-400/20 dark:border-blue-400/20 bg-white/70 dark:bg-white/5 px-4 py-3">
               <div className="flex items-center gap-2">
                 <span
@@ -132,7 +133,7 @@ const MessageBox = ({
                   )}
                 />
                 <h3 className="text-sm font-semibold text-black dark:text-white">
-                  {researchStatusActive ? '研究过程' : '研究过程已完成'}
+                  研究过程
                 </h3>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
